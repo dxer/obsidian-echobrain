@@ -6,6 +6,7 @@ import https from 'node:https';
 import { pipeline, env } from '@xenova/transformers';
 import * as ort from 'onnxruntime-web';
 import { EmbeddingMode, EchoBrainPluginSettings } from './types.js';
+import { DatabaseService } from './databaseService.js';
 
 // Configure WebAssembly ONNX engine
 env.backends.onnx = ort as any;
@@ -28,18 +29,23 @@ export class PluginEmbeddingService {
   private settings: EchoBrainPluginSettings;
   private extractor: any = null;
   private vectorCache: Map<string, CachedVector> = new Map();
-  private cacheFilePath: string;
+  private dbService: DatabaseService;
+  private legacyCacheFilePath: string;
   private modelsDirPath: string;
-  private isCacheDirty: boolean = false;
   private isDownloading: boolean = false;
 
   constructor(vaultBasePath: string, settings: EchoBrainPluginSettings) {
     this.vaultBasePath = vaultBasePath;
     this.settings = settings;
     const cacheDir = path.join(vaultBasePath, '.echobrain');
-    this.cacheFilePath = path.join(cacheDir, 'embeddings-cache.json');
+    this.legacyCacheFilePath = path.join(cacheDir, 'embeddings-cache.json');
     this.modelsDirPath = path.join(cacheDir, 'models');
-    this.loadCache();
+    this.dbService = new DatabaseService(vaultBasePath);
+    this.initStorageAndMigrate();
+  }
+
+  public getDatabaseService(): DatabaseService {
+    return this.dbService;
   }
 
   public updateSettings(settings: EchoBrainPluginSettings) {
@@ -83,54 +89,77 @@ export class PluginEmbeddingService {
   }
 
   /**
-   * Load cache from disk
+   * Initialize SQLite database and transparently migrate legacy JSON cache if present
    */
-  private async loadCache(): Promise<void> {
+  private async initStorageAndMigrate(): Promise<void> {
     try {
-      if (fsSync.existsSync(this.cacheFilePath)) {
-        const data = await fs.readFile(this.cacheFilePath, 'utf-8');
-        const json = JSON.parse(data);
-        for (const [k, v] of Object.entries(json)) {
-          this.vectorCache.set(k, v as CachedVector);
+      await this.dbService.init();
+
+      // 1. Transparent migration from legacy embeddings-cache.json
+      if (fsSync.existsSync(this.legacyCacheFilePath)) {
+        try {
+          const raw = await fs.readFile(this.legacyCacheFilePath, 'utf-8');
+          const legacyData = JSON.parse(raw);
+          const legacyEntries = Object.entries(legacyData);
+
+          if (legacyEntries.length > 0 && this.dbService.count() === 0) {
+            console.log(`[EchoBrain DB] Migrating ${legacyEntries.length} legacy vectors to SQLite WASM...`);
+            for (const [p, item] of legacyEntries) {
+              const rec = item as { mtime: number; vector: number[] };
+              if (rec && Array.isArray(rec.vector) && rec.vector.length > 0) {
+                await this.dbService.upsertVector(p, rec.mtime, rec.vector);
+              }
+            }
+            await this.dbService.saveImmediate();
+            console.log('[EchoBrain DB] Legacy vectors successfully migrated into SQLite.');
+          }
+
+          // Rename legacy file to .migrated so it won't be reprocessed
+          await fs.rename(this.legacyCacheFilePath, `${this.legacyCacheFilePath}.migrated`);
+        } catch (migErr) {
+          console.warn('[EchoBrain DB] Legacy migration warning:', migErr);
         }
       }
+
+      // 2. Load existing vectors from SQLite into high-speed memory cache
+      const stored = this.dbService.getAllVectors();
+      for (const [p, val] of stored.entries()) {
+        this.vectorCache.set(p, {
+          mtime: val.mtime,
+          vector: Array.from(val.vector)
+        });
+      }
+      console.log(`[EchoBrain DB] Loaded ${this.vectorCache.size} vectors from SQLite database.`);
     } catch (e) {
-      console.warn('[EchoBrain Embedding] Cache load error:', e);
+      console.warn('[EchoBrain Embedding] Storage init error:', e);
     }
   }
 
+  /**
+   * Save cache immediately (compatible with existing calls)
+   */
   public async saveCache(): Promise<void> {
-    if (!this.isCacheDirty) return;
-    try {
-      const cacheDir = path.dirname(this.cacheFilePath);
-      if (!fsSync.existsSync(cacheDir)) {
-        await fs.mkdir(cacheDir, { recursive: true });
-      }
+    await this.dbService.saveImmediate();
+  }
 
-      // Compact serialization: filter invalid entries and truncate float precision to 4 decimals to reduce file size by 60%
-      const obj: Record<string, { mtime: number; vector: number[] }> = {};
-      for (const [k, v] of this.vectorCache.entries()) {
-        if (v && Array.isArray(v.vector) && v.vector.length > 0) {
-          obj[k] = {
-            mtime: v.mtime,
-            vector: v.vector.map(n => Math.round(n * 10000) / 10000)
-          };
-        }
-      }
+  /**
+   * Delete vector for a removed note
+   */
+  public deleteVector(relativePath: string): void {
+    this.vectorCache.delete(relativePath);
+    this.dbService.deleteVector(relativePath);
+  }
 
-      // Atomic file write using temporary file to prevent corruption on crash
-      const tmpPath = `${this.cacheFilePath}.tmp-${Date.now()}`;
-      await fs.writeFile(tmpPath, JSON.stringify(obj), 'utf-8');
-      
-      // Atomic rename
-      if (fsSync.existsSync(this.cacheFilePath)) {
-        try { await fs.unlink(this.cacheFilePath); } catch {}
-      }
-      await fs.rename(tmpPath, this.cacheFilePath);
-      this.isCacheDirty = false;
-    } catch (e) {
-      console.error('[EchoBrain Embedding] Atomic cache save error:', e);
+  /**
+   * Rename vector record for a renamed note
+   */
+  public renameVector(oldPath: string, newPath: string): void {
+    const existing = this.vectorCache.get(oldPath);
+    if (existing) {
+      this.vectorCache.delete(oldPath);
+      this.vectorCache.set(newPath, existing);
     }
+    this.dbService.renameVector(oldPath, newPath);
   }
 
   /**
@@ -496,7 +525,10 @@ export class PluginEmbeddingService {
     const vector = await this.getEmbedding(content);
     if (vector) {
       this.vectorCache.set(relativePath, { mtime, vector });
-      this.isCacheDirty = true;
+      // Single in-place upsert into SQLite WASM database
+      this.dbService.upsertVector(relativePath, mtime, vector).catch(e => {
+        console.warn('[EchoBrain DB] Upsert vector failed:', e);
+      });
     }
     return vector;
   }

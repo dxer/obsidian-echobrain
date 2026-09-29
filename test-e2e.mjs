@@ -298,7 +298,7 @@ async function run() {
             result: {
               protocolVersion: '2024-11-05',
               capabilities: { tools: {} },
-              serverInfo: { name: 'echobrain-local', version: '0.1.0' }
+              serverInfo: { name: 'echobrain-local', version: '0.3.0' }
             }
           }));
         } else if (rpc.method === 'tools/list') {
@@ -313,7 +313,9 @@ async function run() {
                 { name: 'find_connections' },
                 { name: 'explore_graph_neighborhood' },
                 { name: 'read_note' },
-                { name: 'get_vault_stats' }
+                { name: 'get_vault_stats' },
+                { name: 'inspect_vault_health' },
+                { name: 'rescue_orphan_note' }
               ]
             }
           }));
@@ -369,7 +371,7 @@ async function run() {
     body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
   }).then(r => r.json());
   console.log(` -> POST JSON-RPC tools/list: 暴露工具数=${toolsRes.result.tools.length} 个`);
-  if (toolsRes.result.tools.length !== 6) throw new Error('tools/list 暴露工具数量不为 6');
+  if (toolsRes.result.tools.length !== 8) throw new Error('tools/list 暴露工具数量不为 8');
 
   // Test 4: POST tools/call explore_graph_neighborhood
   const callRes = await fetch(`http://127.0.0.1:${testPort}/`, {

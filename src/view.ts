@@ -13,6 +13,8 @@ export class EchoBrainView extends ItemView {
   private activeNotePath: string = '';
   private recallResults: SearchResultItem[] = [];
   private activityLogs: ActivityLogItem[] = [];
+  private showHealthDashboard: boolean = false;
+  private activeNoteOutlinks: Set<string> = new Set();
 
   constructor(leaf: WorkspaceLeaf, plugin: EchoBrainLocalPlugin) {
     super(leaf);
@@ -52,13 +54,58 @@ export class EchoBrainView extends ItemView {
     this.activeNotePath = file.path;
     try {
       const content = await this.app.vault.read(file);
+      const cache = this.app.metadataCache.getFileCache(file);
+
+      // Extract title
+      const title = cache?.frontmatter?.title || file.basename;
+
+      // Extract tags
+      const tagSet = new Set<string>();
+      if (cache?.tags) {
+        cache.tags.forEach(t => tagSet.add(t.tag.replace(/^#/, '')));
+      }
+      if (cache?.frontmatter?.tags) {
+        const fmTags = cache.frontmatter.tags;
+        if (Array.isArray(fmTags)) {
+          fmTags.forEach(t => tagSet.add(String(t).replace(/^#/, '')));
+        } else if (typeof fmTags === 'string') {
+          fmTags.split(/[\s,]+/).forEach(t => tagSet.add(t.replace(/^#/, '')));
+        }
+      }
+
+      // Extract outgoing link targets
+      const outlinks = cache?.links ? cache.links.map(l => l.link) : [];
+      this.activeNoteOutlinks.clear();
+      outlinks.forEach(l => this.activeNoteOutlinks.add(l.toLowerCase()));
+
+      // Clean body content by stripping YAML frontmatter and heavy noise
+      let cleanBody = content;
+      if (cleanBody.startsWith('---')) {
+        const endFm = cleanBody.indexOf('---', 3);
+        if (endFm !== -1) {
+          cleanBody = cleanBody.slice(endFm + 3).trim();
+        }
+      }
+
+      const contextParts = [
+        `标题: ${title}`,
+        tagSet.size > 0 ? `标签: ${Array.from(tagSet).map(t => '#' + t).join(' ')}` : '',
+        outlinks.length > 0 ? `引用双链: ${outlinks.map(l => `[[${l}]]`).join(' ')}` : '',
+        cleanBody.slice(0, 2000)
+      ].filter(Boolean);
+
+      const enrichedContext = contextParts.join('\n\n');
+      const maxCards = this.plugin.settings.recallMaxCards || 3;
+
       const rawResults = await this.engine.findConnections({
-        currentContext: content.slice(0, 1500),
-        limit: 4,
+        currentContext: enrichedContext,
+        activePath: file.path,
+        limit: maxCards + 1,
         expandGraphHops: 1
       });
-      this.recallResults = rawResults.filter(r => r.path !== file.path).slice(0, 3);
-    } catch {
+      this.recallResults = rawResults.filter(r => r.path !== file.path).slice(0, maxCards);
+    } catch (e) {
+      console.warn('[EchoBrain Recall] updateRecall failed:', e);
       this.recallResults = [];
     }
     this.render();
@@ -81,8 +128,22 @@ export class EchoBrainView extends ItemView {
       const titleBox = header.createEl('div', { cls: 'echobrain-title-box' });
       titleBox.createEl('h4', { text: '关联知识召回 (Context Recall)' });
 
-      // Action button to toggle activity logs
+      // Action buttons: Vault Health Dashboard & Activity Logs
       const actionsBox = header.createEl('div', { cls: 'echobrain-header-actions' });
+
+      const toggleHealthBtn = actionsBox.createEl('button', {
+        cls: `clickable-icon echobrain-action-btn ${this.showHealthDashboard ? 'is-active' : ''}`,
+        attr: {
+          'aria-label': this.showHealthDashboard ? '收起知识库体检' : '展开知识库体检与孤岛雷达',
+          'title': this.showHealthDashboard ? '收起知识库体检' : '展开知识库体检与孤岛雷达'
+        }
+      });
+      setIcon(toggleHealthBtn, 'activity');
+      toggleHealthBtn.onclick = () => {
+        this.showHealthDashboard = !this.showHealthDashboard;
+        this.render();
+      };
+
       const toggleLogBtn = actionsBox.createEl('button', {
         cls: `clickable-icon echobrain-action-btn ${this.plugin.settings.showActivityLogs ? 'is-active' : ''}`,
         attr: {
@@ -96,6 +157,11 @@ export class EchoBrainView extends ItemView {
         await this.plugin.saveSettings();
         this.render();
       };
+
+      // 1.5. Vault Health Dashboard (when active)
+      if (this.showHealthDashboard) {
+        this.renderHealthDashboard(container);
+      }
 
     // 2. Active Note Section
     const activeSection = container.createEl('div', { cls: 'echobrain-active-section' });
@@ -150,11 +216,17 @@ export class EchoBrainView extends ItemView {
           new Notice(`已复制: [[${res.title}]]`);
         };
 
+        const isLinked = this.activeNoteOutlinks.has(res.title.toLowerCase()) ||
+          this.activeNoteOutlinks.has(res.path.replace(/\.md$/, '').toLowerCase());
+
         const insertBtn = btnBox.createEl('button', {
           cls: 'clickable-icon echobrain-card-action-btn',
-          attr: { 'aria-label': '插入至当前光标位置', 'title': '插入至当前光标位置' }
+          attr: {
+            'aria-label': isLinked ? '在当前光标插入双链' : '一键转为双链引用并插入光标处',
+            'title': isLinked ? '在当前光标插入双链' : '一键转为双链引用并插入光标处'
+          }
         });
-        setIcon(insertBtn, 'file-input');
+        setIcon(insertBtn, isLinked ? 'file-input' : 'link');
         insertBtn.onclick = (e) => {
           e.stopPropagation();
           const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -166,9 +238,14 @@ export class EchoBrainView extends ItemView {
           }
         };
 
-        // Connection reason badge
+        // Connection reason badge with semantic mention indication
         if (res.connectionReason) {
-          card.createEl('div', { cls: 'echobrain-card-reason', text: res.connectionReason });
+          const reasonClass = isLinked ? 'is-linked' : 'is-semantic-mention';
+          const prefix = isLinked ? '🔗 已双链' : '💡 隐式提及';
+          card.createEl('div', {
+            cls: `echobrain-card-reason ${reasonClass}`,
+            text: `${prefix} · ${res.connectionReason}`
+          });
         }
 
         // Snippet
@@ -229,5 +306,85 @@ export class EchoBrainView extends ItemView {
     topRow.createEl('span', { cls: 'echobrain-log-time', text: timeStr });
 
     item.createEl('div', { cls: 'echobrain-log-summary', text: log.summary });
+  }
+
+  private renderHealthDashboard(container: HTMLElement) {
+    const health = this.engine.getVaultHealth();
+    const section = container.createEl('div', { cls: 'echobrain-health-section' });
+
+    const header = section.createEl('div', { cls: 'echobrain-health-header' });
+    header.createEl('h5', { text: '🩺 知识库健康体检与孤岛雷达' });
+
+    // Metric Badges
+    const statsRow = section.createEl('div', { cls: 'echobrain-health-stats' });
+    statsRow.createEl('span', { cls: 'echobrain-health-badge', text: `📝 笔记: ${health.totalNotes}` });
+    statsRow.createEl('span', {
+      cls: `echobrain-health-badge ${health.orphanCount > 0 ? 'is-warning' : 'is-good'}`,
+      text: `🏝️ 孤岛: ${health.orphanCount} 篇`
+    });
+    statsRow.createEl('span', {
+      cls: `echobrain-health-badge ${health.brokenLinksCount > 0 ? 'is-error' : 'is-good'}`,
+      text: `⚠️ 死链: ${health.brokenLinksCount} 条`
+    });
+
+    // Orphans list
+    if (health.orphans.length > 0) {
+      const orphanBox = section.createEl('div', { cls: 'echobrain-orphan-box' });
+      orphanBox.createEl('div', { cls: 'echobrain-orphan-title', text: '待拯救孤岛笔记 (零引用 / 零被引用):' });
+
+      for (const orphan of health.orphans.slice(0, 5)) {
+        const item = orphanBox.createEl('div', { cls: 'echobrain-orphan-item' });
+        const nameRow = item.createEl('div', { cls: 'echobrain-orphan-name-row' });
+        const oLink = nameRow.createEl('a', { cls: 'echobrain-orphan-link', text: orphan.title });
+        oLink.onclick = (e) => {
+          e.preventDefault();
+          this.app.workspace.openLinkText(orphan.path, '', false);
+        };
+
+        const rescueBtn = nameRow.createEl('button', {
+          cls: 'echobrain-rescue-btn',
+          text: '💡 智能解救'
+        });
+
+        const targetContainer = item.createEl('div', { cls: 'echobrain-rescue-targets' });
+
+        rescueBtn.onclick = async () => {
+          rescueBtn.disabled = true;
+          rescueBtn.setText('分析中...');
+          const result = await this.engine.rescueOrphanNote(orphan.path, 2);
+          targetContainer.empty();
+
+          if (!result || result.suggestedTargets.length === 0) {
+            targetContainer.createEl('div', { cls: 'echobrain-rescue-empty', text: '未找到明显相关的建议节点' });
+            rescueBtn.setText('无匹配');
+            return;
+          }
+
+          rescueBtn.setText('已推荐');
+          for (const target of result.suggestedTargets) {
+            const targetRow = targetContainer.createEl('div', { cls: 'echobrain-rescue-target-row' });
+            const tLink = targetRow.createEl('a', { cls: 'echobrain-rescue-target-name', text: `🔗 [[${target.title}]]` });
+            tLink.onclick = (e) => {
+              e.preventDefault();
+              this.app.workspace.openLinkText(target.path, '', false);
+            };
+
+            const connectBtn = targetRow.createEl('button', {
+              cls: 'echobrain-connect-btn',
+              text: '一键织网连结'
+            });
+            connectBtn.onclick = async () => {
+              const ok = await this.engine.connectNotes(orphan.path, target.title);
+              if (ok) {
+                new Notice(`已将 [[${target.title}]] 编织进 [[${orphan.title}]]！`);
+                this.render();
+              }
+            };
+          }
+        };
+      }
+    } else {
+      section.createEl('div', { cls: 'echobrain-health-good', text: '✨ 太棒了！全库无孤岛笔记，知识网络连接紧密。' });
+    }
   }
 }

@@ -85,3 +85,11 @@ export interface IndexedDocument {
   pageRank: number;
   vector?: number[];
 }
+
+export interface VaultHealthReport {
+  totalNotes: number;
+  orphanCount: number;
+  brokenLinksCount: number;
+  orphans: { path: string; title: string; mtime: number }[];
+  brokenLinks: { sourcePath: string; link: string }[];
+}

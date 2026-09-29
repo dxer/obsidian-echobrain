@@ -115,15 +115,15 @@ export class EmbeddedMcpServer {
       },
       {
         name: 'find_connections',
-        description: 'Ambient proactive recall: Find related past notes and bugs based on current editor text/code context.',
+        description: 'Ambient proactive recall: Find related past notes, bi-directional links, and concepts based on current context or active note path.',
         inputSchema: {
           type: 'object',
           properties: {
-            current_context: { type: 'string', description: 'Current code block or paragraph' },
+            current_context: { type: 'string', description: 'Current code block, paragraph, or active editor text' },
+            active_path: { type: 'string', description: 'Optional relative path of active note in vault (e.g. "01-Tech/FastAPI.md")' },
             limit: { type: 'integer', default: 3 },
             expand_graph_hops: { type: 'integer', default: 1 }
-          },
-          required: ['current_context']
+          }
         }
       },
       {
@@ -154,6 +154,23 @@ export class EmbeddedMcpServer {
         name: 'get_vault_stats',
         description: 'Get total notes count, unique tags, and top hub notes by PageRank.',
         inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'inspect_vault_health',
+        description: 'Inspect vault health: count isolated orphan notes and detect broken WikiLinks.',
+        inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'rescue_orphan_note',
+        description: 'Find intelligent linking targets to rescue an orphan note and weave it into the knowledge graph.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'Relative path of orphan note in vault' },
+            auto_connect: { type: 'boolean', description: 'Whether to automatically append link into the note', default: false }
+          },
+          required: ['path']
+        }
       }
     ];
   }
@@ -312,11 +329,12 @@ export class EmbeddedMcpServer {
         }
 
         case 'find_connections': {
-          const currentContext = String(args?.current_context || '');
+          const currentContext = String(args?.current_context || args?.context || '');
+          const activePath = (args?.active_path || args?.path) ? String(args.active_path || args.path).trim() : undefined;
           const limit = Number(args?.limit) || 3;
           const expandGraphHops = Number(args?.expand_graph_hops) || 1;
 
-          const connections = await this.engine.findConnections({ currentContext, limit, expandGraphHops });
+          const connections = await this.engine.findConnections({ currentContext, activePath, limit, expandGraphHops });
           this.logActivity(clientName, 'find_connections', `灵感回响: 找到 ${connections.length} 条关联经验`, 'success');
 
           if (connections.length === 0) {
@@ -405,6 +423,56 @@ export class EmbeddedMcpServer {
           };
         }
 
+        case 'inspect_vault_health': {
+          const health = this.engine.getVaultHealth();
+          this.logActivity(clientName, 'inspect_vault_health', `知识库体检: 孤岛 ${health.orphanCount} 篇, 死链 ${health.brokenLinksCount} 条`, 'success');
+
+          const orphanList = health.orphans.slice(0, 8).map(o => `- 🏝️ [${o.title}](\`${o.path}\`)`).join('\n') || '（无孤岛笔记，知识网络连接紧密）';
+          const brokenList = health.brokenLinks.slice(0, 8).map(b => `- ⚠️ \`${b.sourcePath}\` -> [[${b.link}]]`).join('\n') || '（无死链）';
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `🩺 **EchoBrain 知识库健康体检报告**:\n- **总笔记数**: ${health.totalNotes} 篇\n- **孤岛笔记 (零引用/零被引用)**: ${health.orphanCount} 篇\n- **死链 (指向不存在文档)**: ${health.brokenLinksCount} 条\n\n### 🏝️ 待拯救孤岛笔记 (Top 8):\n${orphanList}\n\n### 🔗 破损死链清单 (Top 8):\n${brokenList}`
+              }
+            ]
+          };
+        }
+
+        case 'rescue_orphan_note': {
+          const notePath = String(args?.path || '').trim();
+          const autoConnect = Boolean(args?.auto_connect);
+          const rescue = await this.engine.rescueOrphanNote(notePath, 3);
+          if (!rescue) {
+            return { content: [{ type: 'text', text: `未找到路径为 ${notePath} 的笔记。` }], isError: true };
+          }
+
+          this.logActivity(clientName, 'rescue_orphan_note', `解救孤岛: "${rescue.orphan.title}" (匹配 ${rescue.suggestedTargets.length} 个目标)`, 'success');
+
+          let autoConnectMsg = '';
+          if (autoConnect && rescue.suggestedTargets.length > 0) {
+            const topTarget = rescue.suggestedTargets[0].title;
+            const connected = await this.engine.connectNotes(notePath, topTarget);
+            if (connected) {
+              autoConnectMsg = `\n\n✅ 已自动将连接写入文档: \`[[${topTarget}]]\``;
+            }
+          }
+
+          const targetList = rescue.suggestedTargets.length > 0
+            ? rescue.suggestedTargets.map(t => `- 🔗 **[[${t.title}]]** (\`${t.path}\`) - 关联原因: ${t.connectionReason || '高度共鸣'}`).join('\n')
+            : '（未找到明显相关的建议目标）';
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `🕸️ **孤岛笔记 [${rescue.orphan.title}] 解救建议**:\n- **路径**: \`${rescue.orphan.path}\`\n\n### 🎯 推荐挂靠知识节点:\n${targetList}${autoConnectMsg}`
+              }
+            ]
+          };
+        }
+
         default:
           throw new Error(`Unknown tool: ${name}`);
       }
@@ -465,8 +533,21 @@ export class EmbeddedMcpServer {
         // 2. Direct JSON-RPC POST handling (Streamable HTTP, used by Cursor / direct HTTP clients)
         if (req.method === 'POST') {
           let rawBody = '';
-          req.on('data', chunk => rawBody += chunk);
+          const maxBodyBytes = 10 * 1024 * 1024; // 10MB safety limit
+          let exceeded = false;
+          req.on('data', chunk => {
+            rawBody += chunk;
+            if (rawBody.length > maxBodyBytes) {
+              exceeded = true;
+              req.destroy();
+            }
+          });
           req.on('end', async () => {
+            if (exceeded) {
+              res.writeHead(413, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32600, message: 'Payload Too Large' } }));
+              return;
+            }
             const sessionId = url.searchParams.get('sessionId');
             const userAgent = req.headers['user-agent'] || 'Unknown Agent';
             const clientName = userAgent.includes('Cursor')
@@ -533,7 +614,7 @@ export class EmbeddedMcpServer {
                         resources: {},
                         prompts: {}
                       },
-                      serverInfo: { name: 'echobrain-local', version: '0.1.0' }
+                      serverInfo: { name: 'echobrain-local', version: '0.3.0' }
                     }
                   }));
                   return;
@@ -717,7 +798,7 @@ export class EmbeddedMcpServer {
   }
 
   /**
-   * Stop the server
+   * Stop the server cleanly without hanging
    */
   public async stop(): Promise<void> {
     if (!this.isRunning || !this.httpServer) return;
@@ -728,12 +809,24 @@ export class EmbeddedMcpServer {
       }
       this.sessions.clear();
 
-      this.httpServer!.close(() => {
-        this.isRunning = false;
-        this.httpServer = null;
-        this.logActivity('System', 'Server 停止', '本地 MCP 服务已停止', 'success');
-        resolve();
-      });
+      try {
+        (this.httpServer as any)?.closeAllConnections?.();
+      } catch {}
+
+      let resolved = false;
+      const finish = () => {
+        if (!resolved) {
+          resolved = true;
+          this.isRunning = false;
+          this.httpServer = null;
+          this.logActivity('System', 'Server 停止', '本地 MCP 服务已停止', 'success');
+          resolve();
+        }
+      };
+
+      this.httpServer!.close(finish);
+      // Safety timeout: ensure plugin unload doesn't hang if sockets linger
+      setTimeout(finish, 1000);
     });
   }
 
@@ -744,7 +837,7 @@ export class EmbeddedMcpServer {
     const mcpServer = new Server(
       {
         name: 'echobrain-local',
-        version: '0.1.0'
+        version: '0.3.0'
       },
       {
         capabilities: {

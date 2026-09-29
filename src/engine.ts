@@ -1,5 +1,5 @@
 import { App, TFile } from 'obsidian';
-import { IndexedDocument, SearchResultItem, GraphNeighborItem, EchoBrainPluginSettings } from './types.js';
+import { IndexedDocument, SearchResultItem, GraphNeighborItem, EchoBrainPluginSettings, VaultHealthReport } from './types.js';
 import { tokenize } from './tokenizer.js';
 import { PluginEmbeddingService } from './embeddingService.js';
 
@@ -166,10 +166,25 @@ export class VaultEngine {
   }
 
   /**
-   * Remove a deleted file from index
+   * Remove a deleted file from index and purge vector from SQLite
    */
   public removeFile(path: string): void {
     this.documents.delete(path);
+    this.embeddingService.deleteVector(path);
+    this.rebuildLinkGraph();
+  }
+
+  /**
+   * Rename a file in memory index and SQLite vector database without re-embedding
+   */
+  public renameFile(oldPath: string, newPath: string): void {
+    const doc = this.documents.get(oldPath);
+    if (doc) {
+      this.documents.delete(oldPath);
+      doc.path = newPath;
+      this.documents.set(newPath, doc);
+    }
+    this.embeddingService.renameVector(oldPath, newPath);
     this.rebuildLinkGraph();
   }
 
@@ -427,84 +442,326 @@ export class VaultEngine {
   }
 
   /**
-   * Find connections for active editor context
+   * Find connections for active editor context or note path using Multi-Signal Hybrid Fusion:
+   * 1. Direct Graph Links (Outlinks & Backlinks)
+   * 2. 2-Hop Graph Topology (Co-citations & Co-references / Shared MOCs)
+   * 3. Shared Tags & Hierarchical Taxonomy
+   * 4. Title & Unlinked Mention Matching
+   * 5. Salient TF-IDF Keywords (filtering out high-frequency vault-wide common words)
+   * 6. Semantic Vector Rescoring (On-demand for top candidates, smooth fusion without false early returns)
    */
   public async findConnections(options: {
     currentContext: string;
+    activePath?: string;
     limit?: number;
     expandGraphHops?: number;
   }): Promise<SearchResultItem[]> {
-    const { currentContext, limit = 3, expandGraphHops = 1 } = options;
-    if (!currentContext || !currentContext.trim()) return [];
+    const { currentContext, activePath, limit = 3, expandGraphHops = 1 } = options;
+    if (!currentContext && !activePath) return [];
 
-    // Semantic vector connection if available
-    if (this.embeddingService.isAvailable()) {
-      const contextVec = await this.embeddingService.getEmbedding(currentContext.slice(0, 800));
-      if (contextVec) {
-        const allDocs = Array.from(this.documents.values());
-        const scored: { doc: IndexedDocument; sim: number }[] = [];
-        for (const doc of allDocs) {
-          if (doc.vector && doc.vector.length > 0) {
-            const sim = this.embeddingService.cosineSimilarity(contextVec, doc.vector);
-            if (sim > 0.35) scored.push({ doc, sim });
-          }
-        }
-        if (scored.length > 0) {
-          scored.sort((a, b) => b.sim - a.sim);
-          return scored.slice(0, limit).map(({ doc, sim }) => {
-            const neighbors = this.getNeighbors(doc.path, expandGraphHops, 3);
-            return {
-              path: doc.path,
-              title: doc.title,
-              snippet: doc.content.slice(0, 200).replace(/\n/g, ' ') + '...',
-              score: parseFloat((sim * 100).toFixed(1)),
-              mtime: doc.mtime,
-              tags: doc.tags,
-              pageRank: doc.pageRank,
-              semanticSimilarity: parseFloat(sim.toFixed(3)),
-              connectionReason: `语义深度共鸣 (${(sim * 100).toFixed(0)}%)`,
-              graphNeighbors: neighbors.length > 0 ? neighbors : undefined
-            };
-          });
+    const allDocs = Array.from(this.documents.values()).filter(d => !this.isPathIgnored(d.path));
+    if (allDocs.length === 0) return [];
+
+    // 1. Resolve active document if available
+    let activeDoc: IndexedDocument | undefined;
+    if (activePath) {
+      activeDoc = this.getDocument(activePath);
+    }
+    if (!activeDoc && currentContext) {
+      const firstLine = currentContext.split('\n')[0].replace(/^(#+\s*|标题:\s*)/, '').trim();
+      if (firstLine) {
+        activeDoc = this.getDocument(firstLine);
+      }
+    }
+
+    const currentPath = activeDoc ? activeDoc.path : (activePath ? activePath.replace(/\\/g, '/') : '');
+    const currentTitle = activeDoc ? activeDoc.title : '';
+    const currentTags = new Set<string>(activeDoc?.tags || []);
+
+    // Extract tags from currentContext if activeDoc doesn't have them
+    if (currentTags.size === 0 && currentContext) {
+      const tagMatches = currentContext.match(/#([\u4e00-\u9fa5A-Za-z0-9_\-\/]+)/g) || [];
+      tagMatches.forEach(t => currentTags.add(t.replace(/^#/, '')));
+    }
+
+    // Direct resolved forward links and backlinks
+    const resolvedLinks = this.app.metadataCache.resolvedLinks || {};
+    const forwardLinkMap = currentPath ? (resolvedLinks[currentPath] || {}) : {};
+    const forwardLinkPaths = new Set<string>(Object.keys(forwardLinkMap));
+    const backlinkPaths = currentPath ? (this.backlinks.get(currentPath) || new Set<string>()) : new Set<string>();
+
+    // If currentPath is new/unsaved, parse explicit [[links]] from context
+    if (currentContext) {
+      const inlineLinks = currentContext.match(/\[\[([^\]\|]+)(?:\|[^\]]+)?\]\]/g) || [];
+      for (const rawLink of inlineLinks) {
+        const linkTarget = rawLink.replace(/^\[\[|\]\]$/g, '').split('|')[0].trim();
+        const targetDoc = this.getDocument(linkTarget);
+        if (targetDoc) {
+          forwardLinkPaths.add(targetDoc.path);
         }
       }
     }
 
-    // Fallback: Lexical token connection
-    const lines = currentContext.split('\n');
-    const filteredText = lines
-      .filter(line => !line.trim().startsWith('//') && !line.trim().startsWith('# '))
-      .join(' ');
-    const contextTokens = tokenize(filteredText);
+    // 2. Build Salient Feature Keywords via TF-IDF over the vault corpus
+    let cleanText = currentContext || (activeDoc ? `${activeDoc.title}\n${activeDoc.content}` : '');
+    cleanText = cleanText
+      .replace(/^---[\s\S]*?---\s*/g, '') // strip YAML
+      .replace(/```[\s\S]*?```/g, ' ')   // strip large code blocks
+      .replace(/!\[\[.*?\]\]/g, ' ')     // strip embeds
+      .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1'); // simplify markdown links
 
-    const freq = new Map<string, number>();
-    for (const t of contextTokens) {
-      if (t.length <= 1) continue;
-      freq.set(t, (freq.get(t) || 0) + 1);
+    const rawTokens = tokenize(cleanText);
+    const tokenFreq = new Map<string, number>();
+    for (const t of rawTokens) {
+      tokenFreq.set(t, (tokenFreq.get(t) || 0) + 1);
     }
 
-    const sortedTokens = Array.from(freq.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(entry => entry[0]);
+    // Boost tokens appearing in title
+    if (currentTitle) {
+      for (const t of tokenize(currentTitle)) {
+        tokenFreq.set(t, (tokenFreq.get(t) || 0) + 4);
+      }
+    }
 
-    if (sortedTokens.length === 0) return [];
+    // Compute DF (Document Frequency) and TF-IDF for each token
+    const totalVaultDocs = allDocs.length;
+    const dfMap = new Map<string, number>();
+    for (const doc of allDocs) {
+      for (const t of tokenFreq.keys()) {
+        if (doc.tokens.has(t)) {
+          dfMap.set(t, (dfMap.get(t) || 0) + 1);
+        }
+      }
+    }
 
-    const searchQuery = sortedTokens.slice(0, 6).join(' ');
-    const results = await this.search({
-      query: searchQuery,
-      limit,
-      expandGraphHops
+    // Salient Token Selection: prioritize high TF, high IDF, penalize ultra-common tokens
+    const salientTokens: { token: string; weight: number }[] = [];
+    for (const [token, tf] of tokenFreq.entries()) {
+      if (token.length <= 1) continue;
+      const df = dfMap.get(token) || 1;
+      // Filter out tokens that appear in > 70% of vault docs (too common, e.g. "使用", "可以")
+      if (totalVaultDocs >= 4 && df / totalVaultDocs > 0.70) continue;
+
+      const idf = Math.log(1 + (totalVaultDocs - df + 0.5) / (df + 0.5));
+      const weight = (1 + Math.log(tf)) * idf;
+      if (weight > 0.5) {
+        salientTokens.push({ token, weight });
+      }
+    }
+    salientTokens.sort((a, b) => b.weight - a.weight);
+    const topSalient = salientTokens.slice(0, 12);
+    const salientTokenSet = new Map(topSalient.map(s => [s.token, s.weight]));
+
+    // 3. Multi-Signal Scoring Loop
+    interface CandidateScore {
+      doc: IndexedDocument;
+      score: number;
+      reasons: string[];
+      matchedKeywords: string[];
+      commonOutlinks: string[];
+      commonBacklinks: string[];
+      sharedTags: string[];
+      sim?: number;
+    }
+
+    const candidateScores: CandidateScore[] = [];
+    const now = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+
+    for (const doc of allDocs) {
+      // Never recommend the active document itself
+      if (currentPath && (doc.path === currentPath || (currentTitle && doc.title === currentTitle))) {
+        continue;
+      }
+
+      let score = 0;
+      const reasons: string[] = [];
+      const matchedKeywords: string[] = [];
+      const commonOutlinks: string[] = [];
+      const commonBacklinks: string[] = [];
+      const sharedTags: string[] = [];
+
+      // Signal 1: Direct Link Graph (Highest Confidence)
+      if (forwardLinkPaths.has(doc.path)) {
+        score += 55;
+        reasons.push('当前笔记直接引用');
+      }
+      if (backlinkPaths.has(doc.path)) {
+        score += 50;
+        reasons.push('被该笔记直接引用');
+      }
+
+      // Signal 2: 2-Hop Co-citations & Co-references
+      if (currentPath) {
+        const docForwardMap = resolvedLinks[doc.path] || {};
+        // Common outgoing links (both cite the same concept)
+        for (const target of forwardLinkPaths) {
+          if (docForwardMap[target]) {
+            const targetDoc = this.documents.get(target);
+            commonOutlinks.push(targetDoc ? targetDoc.title : target.replace(/\.md$/, ''));
+          }
+        }
+        if (commonOutlinks.length > 0) {
+          score += Math.min(30, commonOutlinks.length * 15);
+          if (reasons.length === 0) {
+            reasons.push(`共同引用 [[${commonOutlinks[0]}]]`);
+          }
+        }
+
+        // Common incoming links (both cited by same MOC/hub)
+        const docBacklinks = this.backlinks.get(doc.path);
+        if (docBacklinks) {
+          for (const src of backlinkPaths) {
+            if (docBacklinks.has(src)) {
+              const srcDoc = this.documents.get(src);
+              commonBacklinks.push(srcDoc ? srcDoc.title : src.replace(/\.md$/, ''));
+            }
+          }
+        }
+        if (commonBacklinks.length > 0) {
+          score += Math.min(24, commonBacklinks.length * 12);
+          if (reasons.length === 0) {
+            reasons.push(`共同归属于 [[${commonBacklinks[0]}]]`);
+          }
+        }
+      }
+
+      // Signal 3: Shared Tags
+      if (currentTags.size > 0 && doc.tags.length > 0) {
+        for (const t of doc.tags) {
+          if (currentTags.has(t)) {
+            sharedTags.push(t);
+          }
+        }
+        if (sharedTags.length > 0) {
+          score += Math.min(36, sharedTags.length * 12);
+          if (reasons.length === 0) {
+            reasons.push(`共同标签 [#${sharedTags.slice(0, 2).join(' #')}]`);
+          }
+        }
+      }
+
+      // Signal 4: Title / Concept Mention
+      const docTitleLower = doc.title.toLowerCase();
+      const currentTitleLower = currentTitle.toLowerCase();
+      const docContentLower = doc.content.toLowerCase();
+      const cleanTextLower = cleanText.toLowerCase();
+
+      // Active title mentioned in doc content (Unlinked mention)
+      if (currentTitle.length >= 3 && docContentLower.includes(currentTitleLower)) {
+        score += 35;
+        if (reasons.length === 0) {
+          reasons.push(`正文提及 [[${currentTitle}]]`);
+        }
+      }
+      // Doc title mentioned in active content
+      if (doc.title.length >= 3 && cleanTextLower.includes(docTitleLower)) {
+        score += 35;
+        if (reasons.length === 0) {
+          reasons.push(`提及概念 [[${doc.title}]]`);
+        }
+      }
+
+      // Signal 5: Salient TF-IDF Keywords Overlap
+      let keywordScore = 0;
+      for (const [token, weight] of salientTokenSet.entries()) {
+        if (doc.tokens.has(token)) {
+          matchedKeywords.push(token);
+          keywordScore += weight;
+        }
+      }
+      if (matchedKeywords.length > 0) {
+        score += Math.min(45, keywordScore * 2.5);
+        if (reasons.length === 0 && matchedKeywords.length >= 2) {
+          reasons.push(`核心关键词共鸣 [${matchedKeywords.slice(0, 3).join(', ')}]`);
+        }
+      }
+
+      // If at least one strong signal matched
+      if (score > 5) {
+        const rawPr = this.pageRanks.get(doc.path);
+        const pr = (rawPr !== undefined && !isNaN(rawPr) && isFinite(rawPr)) ? rawPr : 1.0;
+        const prBoost = 1.0 + 0.08 * Math.min(pr, 4.0);
+        const ageDays = (now - doc.mtime) / oneDayMs;
+        const timeFactor = 1.0 / (1.0 + 0.0003 * Math.max(0, ageDays));
+
+        candidateScores.push({
+          doc,
+          score: score * prBoost * timeFactor,
+          reasons,
+          matchedKeywords,
+          commonOutlinks,
+          commonBacklinks,
+          sharedTags
+        });
+      }
+    }
+
+    // 4. Semantic Vector Rescore on Top Candidates (Smooth Hybrid Fusion)
+    if (this.embeddingService.isAvailable() && candidateScores.length > 0) {
+      candidateScores.sort((a, b) => b.score - a.score);
+      const topCandidates = candidateScores.slice(0, 15);
+      const textToEmbed = `${currentTitle}\n${Array.from(currentTags).map(t => '#' + t).join(' ')}\n${cleanText.slice(0, 800)}`;
+      const contextVec = await this.embeddingService.getEmbedding(textToEmbed);
+
+      if (contextVec) {
+        let onDemandCount = 0;
+        for (const item of topCandidates) {
+          let vec = item.doc.vector;
+          if (!vec && onDemandCount < 5) {
+            onDemandCount++;
+            const docText = `${item.doc.title}\n${item.doc.tags.map(t => '#' + t).join(' ')}\n${item.doc.content.slice(0, 800)}`;
+            const computed = await this.embeddingService.getDocumentVector(item.doc.path, docText, item.doc.mtime);
+            if (computed) {
+              item.doc.vector = computed;
+              vec = computed;
+            }
+          }
+          if (vec && vec.length > 0) {
+            const sim = this.embeddingService.cosineSimilarity(contextVec, vec);
+            item.sim = sim;
+            // Only apply boost for solid semantic similarity (>= 0.50)
+            if (sim >= 0.50) {
+              item.score += sim * 35;
+              if (sim >= 0.70) {
+                item.reasons.unshift(`语义深度共鸣 (${(sim * 100).toFixed(0)}%)`);
+              }
+            }
+          }
+        }
+        if (onDemandCount > 0) {
+          this.embeddingService.saveCache();
+        }
+      }
+    }
+
+    // 5. Final Sorting and Formatting
+    candidateScores.sort((a, b) => b.score - a.score);
+    const topResults = candidateScores.slice(0, limit);
+
+    return topResults.map(item => {
+      const neighbors = expandGraphHops > 0 ? this.getNeighbors(item.doc.path, expandGraphHops, 3) : [];
+      let finalReason = item.reasons.length > 0 ? item.reasons.slice(0, 2).join(' · ') : '知识关联共鸣';
+      if (item.matchedKeywords.length > 0 && !finalReason.includes('关键词')) {
+        finalReason += ` · 词: [${item.matchedKeywords.slice(0, 2).join(', ')}]`;
+      }
+
+      // Generate context snippet around matched keywords
+      const snippet = this.generateSnippet(item.doc.content, item.matchedKeywords, currentTitle.toLowerCase());
+
+      return {
+        path: item.doc.path,
+        title: item.doc.title,
+        snippet,
+        score: parseFloat(item.score.toFixed(1)),
+        mtime: item.doc.mtime,
+        tags: item.doc.tags,
+        pageRank: item.doc.pageRank,
+        semanticSimilarity: item.sim !== undefined ? parseFloat(item.sim.toFixed(3)) : undefined,
+        connectionReason: finalReason,
+        graphNeighbors: neighbors.length > 0 ? neighbors : undefined
+      };
     });
-
-    for (const res of results) {
-      const doc = this.documents.get(res.path);
-      if (!doc) continue;
-      const matched = sortedTokens.filter(t => doc.tokens.has(t));
-      res.connectionReason = matched.length > 0 ? `命中关键词 [${matched.slice(0, 4).join(', ')}]` : '上下文语义关联';
-    }
-
-    return results;
   }
 
   /**
@@ -734,6 +991,99 @@ export class VaultEngine {
       embeddingAvailable: this.embeddingService.isAvailable(),
       topHubs
     };
+  }
+
+  /**
+   * Health Check: Detect orphan notes (zero in/out links) and broken links
+   */
+  public getVaultHealth(): VaultHealthReport {
+    const resolvedLinks = this.app.metadataCache.resolvedLinks || {};
+    const unresolvedLinks = this.app.metadataCache.unresolvedLinks || {};
+
+    const orphans: { path: string; title: string; mtime: number }[] = [];
+    for (const doc of this.documents.values()) {
+      const outCount = Object.keys(resolvedLinks[doc.path] || {}).length;
+      const inCount = this.backlinks.get(doc.path)?.size || 0;
+      if (outCount === 0 && inCount === 0) {
+        orphans.push({
+          path: doc.path,
+          title: doc.title,
+          mtime: doc.mtime
+        });
+      }
+    }
+
+    orphans.sort((a, b) => b.mtime - a.mtime);
+
+    const brokenLinks: { sourcePath: string; link: string }[] = [];
+    for (const [sourcePath, linkMap] of Object.entries(unresolvedLinks)) {
+      if (this.isPathIgnored(sourcePath)) continue;
+      for (const targetLink of Object.keys(linkMap)) {
+        brokenLinks.push({
+          sourcePath,
+          link: targetLink
+        });
+      }
+    }
+
+    return {
+      totalNotes: this.documents.size,
+      orphanCount: orphans.length,
+      brokenLinksCount: brokenLinks.length,
+      orphans,
+      brokenLinks
+    };
+  }
+
+  /**
+   * Rescue an orphan note by finding 2-3 most relevant target notes in the vault
+   */
+  public async rescueOrphanNote(
+    orphanPath: string,
+    limit: number = 2
+  ): Promise<{ orphan: IndexedDocument; suggestedTargets: SearchResultItem[] } | null> {
+    const doc = this.getDocument(orphanPath);
+    if (!doc) return null;
+
+    const suggestedTargets = await this.findConnections({
+      currentContext: `${doc.title}\n${doc.content.slice(0, 1500)}`,
+      activePath: doc.path,
+      limit,
+      expandGraphHops: 1
+    });
+
+    return { orphan: doc, suggestedTargets };
+  }
+
+  /**
+   * Connect an orphan note to a target note by appending a link
+   */
+  public async connectNotes(sourcePath: string, targetTitle: string): Promise<boolean> {
+    const file = this.app.vault.getAbstractFileByPath(sourcePath);
+    if (!(file instanceof TFile)) return false;
+
+    try {
+      const content = await this.app.vault.read(file);
+      const linkToAdd = `\n\n- 🔗 关联: [[${targetTitle}]]\n`;
+      await this.app.vault.modify(file, content.trimEnd() + linkToAdd);
+      await this.indexFile(file);
+      this.rebuildLinkGraph();
+      return true;
+    } catch (e) {
+      console.error('[EchoBrain Engine] Failed to connect notes:', e);
+      return false;
+    }
+  }
+
+  /**
+   * Gracefully flush and close database connections
+   */
+  public async close(): Promise<void> {
+    try {
+      await this.embeddingService.getDatabaseService().close();
+    } catch (e) {
+      console.warn('[EchoBrain Engine] Close database error:', e);
+    }
   }
 
   private generateSnippet(content: string, tokens: string[], fullQuery: string): string {

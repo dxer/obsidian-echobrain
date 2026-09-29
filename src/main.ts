@@ -4,6 +4,7 @@ import { VaultEngine } from './engine.js';
 import { EmbeddedMcpServer } from './server.js';
 import { EchoBrainView, VIEW_TYPE_ECHOBRAIN } from './view.js';
 import { EchoBrainSettingTab } from './settings.js';
+import { InlineRecallSuggest } from './editorSuggest.js';
 
 export default class EchoBrainLocalPlugin extends Plugin {
   public settings: EchoBrainPluginSettings = DEFAULT_SETTINGS;
@@ -88,9 +89,8 @@ export default class EchoBrainLocalPlugin extends Plugin {
     this.registerEvent(
       this.app.vault.on('rename', async (file, oldPath) => {
         if (file instanceof TFile && file.extension === 'md') {
-          this.engine.removeFile(oldPath);
+          this.engine.renameFile(oldPath, file.path);
           await this.engine.indexFile(file);
-          this.engine.rebuildLinkGraph();
         }
       })
     );
@@ -189,14 +189,24 @@ export default class EchoBrainLocalPlugin extends Plugin {
       }
     });
 
-    // 9. Add Settings Tab
+    // 9. Register Inline Recall Autocomplete (Trigger via @@)
+    this.registerEditorSuggest(new InlineRecallSuggest(this.app, this));
+
+    // 10. Add Settings Tab
     this.addSettingTab(new EchoBrainSettingTab(this.app, this));
   }
 
   async onunload() {
     console.log('[EchoBrain] Unloading EchoBrain Local Plugin...');
+    if (this.recallTimer) {
+      clearTimeout(this.recallTimer);
+      this.recallTimer = null;
+    }
     if (this.server) {
       await this.server.stop();
+    }
+    if (this.engine) {
+      await this.engine.close();
     }
   }
 

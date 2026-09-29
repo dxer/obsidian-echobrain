@@ -1,7 +1,7 @@
 {
   "id": "echobrain-local",
   "name": "EchoBrain Local",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "minAppVersion": "1.4.0",
   "description": "Embedded Local MCP Server (HTTP/SSE) & Proactive Recall for Cursor, Claude Desktop, and AI Agents.",
   "author": "知白AI",

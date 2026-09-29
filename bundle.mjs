@@ -9,7 +9,7 @@ console.log('📦 正在生成 EchoBrain Local 生产发布 Bundle...\n');
 console.log('[1/4] 执行 esbuild 生产环境打包 (Target: ES2022, Platform: Node)...');
 execSync('node esbuild.config.mjs production', { stdio: 'inherit' });
 
-// 2. 检查必需产物文件
+// 2. 检查必需产物文件并准备静态资源
 const REQUIRED_FILES = ['main.js', 'manifest.json', 'styles.css'];
 for (const file of REQUIRED_FILES) {
   if (!fs.existsSync(file)) {
@@ -17,18 +17,37 @@ for (const file of REQUIRED_FILES) {
   }
 }
 
+// 确保 SQLite WASM 二进制文件就位
+const wasmSource = path.resolve('node_modules/sql.js/dist/sql-wasm.wasm');
+const wasmDestRoot = path.resolve('sql-wasm.wasm');
+if (fs.existsSync(wasmSource) && !fs.existsSync(wasmDestRoot)) {
+  fs.copyFileSync(wasmSource, wasmDestRoot);
+}
+
 // 3. 准备 dist 目录
 console.log('[2/4] 组装标准化插件目录结构...');
 const rootDist = path.resolve('dist');
 const pluginDist = path.join(rootDist, 'echobrain-local');
 
-if (fs.existsSync(rootDist)) {
-  fs.rmSync(rootDist, { recursive: true, force: true });
+try {
+  if (fs.existsSync(pluginDist)) {
+    // 尽量清理旧文件
+    const files = fs.readdirSync(pluginDist);
+    for (const f of files) {
+      try { fs.unlinkSync(path.join(pluginDist, f)); } catch {}
+    }
+  } else {
+    fs.mkdirSync(pluginDist, { recursive: true });
+  }
+} catch {
+  fs.mkdirSync(pluginDist, { recursive: true });
 }
-fs.mkdirSync(pluginDist, { recursive: true });
 
 for (const file of REQUIRED_FILES) {
   fs.copyFileSync(file, path.join(pluginDist, file));
+}
+if (fs.existsSync(wasmDestRoot)) {
+  fs.copyFileSync(wasmDestRoot, path.join(pluginDist, 'sql-wasm.wasm'));
 }
 
 // 4. 压缩为 zip 包
@@ -54,7 +73,9 @@ if (isWindows) {
 }
 
 // 复制一份到 dist 目录下
-fs.copyFileSync(zipPath, distZipPath);
+try {
+  fs.copyFileSync(zipPath, distZipPath);
+} catch {}
 
 // 5. 生成校验摘要
 console.log('\n[4/4] 校验 Bundle 文件完整性:');
@@ -68,7 +89,9 @@ function getFileInfo(filePath) {
 
 console.log('------------------------------------------------------------');
 console.log(`📁 插件发布目录: ${path.relative(process.cwd(), pluginDist)}`);
-for (const f of REQUIRED_FILES) {
+const ALL_DIST_FILES = [...REQUIRED_FILES];
+if (fs.existsSync(wasmDestRoot)) ALL_DIST_FILES.push('sql-wasm.wasm');
+for (const f of ALL_DIST_FILES) {
   const info = getFileInfo(path.join(pluginDist, f));
   console.log(`   - ${f.padEnd(16)} | 大小: ${info.size.padEnd(10)} | SHA256: ${info.sha256}`);
 }

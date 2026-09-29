@@ -22,6 +22,11 @@
       <stop offset="100%" stop-color="#13271e" />
     </linearGradient>
 
+    <linearGradient id="dbGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1f3750" />
+      <stop offset="100%" stop-color="#122334" />
+    </linearGradient>
+
     <filter id="shadow" x="-5%" y="-5%" width="110%" height="115%" filterUnits="userSpaceOnUse">
       <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.4" />
     </filter>
@@ -48,98 +53,106 @@
   <!-- Background Canvas -->
   <rect width="960" height="560" rx="12" fill="url(#bgGrad)" stroke="#30363d" stroke-width="1" />
 
-  <!-- ==================== TOP: Single Source of Truth ==================== -->
-  <g transform="translate(240, 24)" filter="url(#shadow)">
-    <rect width="480" height="64" rx="8" fill="url(#vaultGrad)" stroke="#8957e5" stroke-width="1.5" />
-    <circle cx="28" cy="32" r="14" fill="#8957e5" fill-opacity="0.2" stroke="#ab7df8" stroke-width="1" />
-    <path d="M 23 27 L 33 27 M 23 32 L 33 32 M 23 37 L 29 37" stroke="#d2a8ff" stroke-width="1.8" stroke-linecap="round" />
-    <text x="54" y="28" class="title" fill="#d2a8ff">Obsidian Markdown Vault (Local Single Source of Truth)</text>
-    <text x="54" y="46" class="subtitle">本地离线文件系统 | 原生双向链接 [[WikiLinks]] | 单向真理与 Inbox 保护机制</text>
+  <!-- ==================== TOP: Obsidian Vault & Interactive Layer ==================== -->
+  <g transform="translate(180, 20)" filter="url(#shadow)">
+    <rect width="600" height="68" rx="8" fill="url(#vaultGrad)" stroke="#8957e5" stroke-width="1.5" />
+    <circle cx="32" cy="34" r="15" fill="#8957e5" fill-opacity="0.2" stroke="#ab7df8" stroke-width="1" />
+    <path d="M 26 29 L 38 29 M 26 34 L 38 34 M 26 39 L 34 39" stroke="#d2a8ff" stroke-width="1.8" stroke-linecap="round" />
+    <text x="60" y="30" class="title" fill="#d2a8ff">Obsidian Markdown Vault &amp; 写作交互层 (Local-First Core)</text>
+    <text x="60" y="48" class="subtitle">原生双链 [[WikiLinks]] | @@ 写作伴随悬浮补全 | 孤岛雷达自愈 (Auto-Rescue) | Inbox 隔离沉淀</text>
   </g>
 
   <!-- Connecting Lines from Vault to Processing Layers -->
-  <path d="M 360 88 L 360 120 L 250 120 L 250 136" fill="none" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arrow-blue)" />
-  <path d="M 600 88 L 600 120 L 710 120 L 710 136" fill="none" stroke="#bc8cff" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arrow)" />
+  <path d="M 330 88 L 330 115 L 240 115 L 240 128" fill="none" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arrow-blue)" />
+  <path d="M 630 88 L 630 115 L 720 115 L 720 128" fill="none" stroke="#bc8cff" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arrow)" />
 
-  <!-- ==================== MIDDLE LAYER: Dual Processing Engines ==================== -->
-  <!-- Left Box: Content Lexical & Semantic Engine -->
-  <g transform="translate(60, 140)" filter="url(#shadow)">
-    <rect width="380" height="136" rx="8" fill="url(#cardGrad)" stroke="#30363d" stroke-width="1" />
-    <rect x="0" y="0" width="380" height="32" rx="8" fill="#1f242c" />
-    <rect x="0" y="24" width="380" height="8" fill="#1f242c" />
-    <text x="16" y="21" class="title" fill="#58a6ff">1. 内容检索层 (Content &amp; Semantic Index)</text>
+  <!-- ==================== MIDDLE LAYER: Dual Processing & Storage ==================== -->
+  <!-- Left Box: Content Semantic & SQLite WASM Storage -->
+  <g transform="translate(50, 130)" filter="url(#shadow)">
+    <rect width="410" height="150" rx="8" fill="url(#cardGrad)" stroke="#30363d" stroke-width="1" />
+    <rect x="0" y="0" width="410" height="32" rx="8" fill="#182330" />
+    <rect x="0" y="24" width="410" height="8" fill="#182330" />
+    <text x="16" y="21" class="title" fill="#58a6ff">1. 内容检索与 SQLite WASM 存储底座</text>
     
     <g transform="translate(16, 44)">
       <!-- Item 1 -->
       <circle cx="6" cy="6" r="3" fill="#58a6ff" />
-      <text x="16" y="10" class="item-text"><tspan font-weight="600" fill="#f0f6fc">BM25 词频引擎</tspan>: 中英文滑动窗口 + 代码驼峰/标识符分词</text>
+      <text x="16" y="10" class="item-text"><tspan font-weight="600" fill="#f0f6fc">SQLite WASM 底座</tspan>: .echobrain/echobrain.db 单条原子 CRUD + WAL 落盘</text>
       <!-- Item 2 -->
       <circle cx="6" cy="30" r="3" fill="#58a6ff" />
-      <text x="16" y="34" class="item-text"><tspan font-weight="600" fill="#f0f6fc">Dense Vector 语义向量</tspan>: 本地 bge-small-zh WASM / API</text>
+      <text x="16" y="34" class="item-text"><tspan font-weight="600" fill="#f0f6fc">Float32 BLOB 向量直存</tspan>: 2KB 二进制连续内存，SIMD 硬件余弦加速</text>
       <!-- Item 3 -->
       <circle cx="6" cy="54" r="3" fill="#58a6ff" />
-      <text x="16" y="58" class="item-text"><tspan font-weight="600" fill="#f0f6fc">时序衰减增益</tspan>: 近期经验赋权，兼顾历史沉淀与最新思考</text>
+      <text x="16" y="58" class="item-text"><tspan font-weight="600" fill="#f0f6fc">TF-IDF 动态降噪</tspan>: 过滤全库超 70% 通用虚词，支持 CamelCase 驼峰切词</text>
+      <!-- Item 4 -->
+      <circle cx="6" cy="78" r="3" fill="#58a6ff" />
+      <text x="16" y="82" class="item-text"><tspan font-weight="600" fill="#f0f6fc">双模 Dense Embedding</tspan>: 纯离线 40MB ONNX 模型 / OpenAI API 双选</text>
     </g>
   </g>
 
   <!-- Right Box: Topology & LinkGraph Engine -->
-  <g transform="translate(520, 140)" filter="url(#shadow)">
-    <rect width="380" height="136" rx="8" fill="url(#cardGrad)" stroke="#30363d" stroke-width="1" />
-    <rect x="0" y="0" width="380" height="32" rx="8" fill="#1f242c" />
-    <rect x="0" y="24" width="380" height="8" fill="#1f242c" />
-    <text x="16" y="21" class="title" fill="#bc8cff">2. 关系图谱层 (Topology &amp; LinkGraph)</text>
+  <g transform="translate(500, 130)" filter="url(#shadow)">
+    <rect width="410" height="150" rx="8" fill="url(#cardGrad)" stroke="#30363d" stroke-width="1" />
+    <rect x="0" y="0" width="410" height="32" rx="8" fill="#241b35" />
+    <rect x="0" y="24" width="410" height="8" fill="#241b35" />
+    <text x="16" y="21" class="title" fill="#bc8cff">2. 关系图谱与拓扑中枢 (Topology &amp; Graph)</text>
     
     <g transform="translate(16, 44)">
       <!-- Item 1 -->
       <circle cx="6" cy="6" r="3" fill="#bc8cff" />
-      <text x="16" y="10" class="item-text"><tspan font-weight="600" fill="#f0f6fc">原生双链拓扑</tspan>: 自动解析出度引用与入度反向链接 (Backlinks)</text>
+      <text x="16" y="10" class="item-text"><tspan font-weight="600" fill="#f0f6fc">物理双链拓扑</tspan>: 挂载原生 resolvedLinks，即时解析出链与反向链接 (Backlinks)</text>
       <!-- Item 2 -->
       <circle cx="6" cy="30" r="3" fill="#bc8cff" />
-      <text x="16" y="34" class="item-text"><tspan font-weight="600" fill="#f0f6fc">迭代 PageRank 算法</tspan>: 自动挖掘知识库 MOC 核心母笔记</text>
+      <text x="16" y="34" class="item-text"><tspan font-weight="600" fill="#f0f6fc">迭代 PageRank 算法</tspan>: 20轮阻尼计算，自动识别 MOC 核心母笔记权重</text>
       <!-- Item 3 -->
       <circle cx="6" cy="54" r="3" fill="#bc8cff" />
-      <text x="16" y="58" class="item-text"><tspan font-weight="600" fill="#f0f6fc">BFS 邻域多跳扩展</tspan>: 顺藤摸瓜引出 1-Hop / 2-Hop 关联网络</text>
+      <text x="16" y="58" class="item-text"><tspan font-weight="600" fill="#f0f6fc">高阶共现拓扑</tspan>: 深度推导共同引用 (Co-citations) 与共同反链兄弟节点</text>
+      <!-- Item 4 -->
+      <circle cx="6" cy="78" r="3" fill="#bc8cff" />
+      <text x="16" y="82" class="item-text"><tspan font-weight="600" fill="#f0f6fc">BFS 邻域漫游</tspan>: 1-Hop / 2-Hop 关联网络自动打包注入大模型上下文</text>
     </g>
   </g>
 
   <!-- Connecting Lines from Processing to Fusion Engine -->
-  <path d="M 250 276 L 250 300 L 400 300 L 400 316" fill="none" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arrow-green)" />
-  <path d="M 710 276 L 710 300 L 560 300 L 560 316" fill="none" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#arrow-green)" />
+  <path d="M 255 280 L 255 298 L 390 298 L 390 310" fill="none" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arrow-green)" />
+  <path d="M 705 280 L 705 298 L 570 298 L 570 310" fill="none" stroke="#bc8cff" stroke-width="1.5" marker-end="url(#arrow-green)" />
 
   <!-- ==================== GRAPH-RAG CORE FUSION ==================== -->
-  <g transform="translate(180, 320)" filter="url(#shadow)">
-    <rect width="600" height="56" rx="8" fill="url(#ragGrad)" stroke="#2ea043" stroke-width="1.5" />
-    <circle cx="28" cy="28" r="14" fill="#2ea043" fill-opacity="0.2" stroke="#3fb950" stroke-width="1" />
-    <path d="M 23 28 L 27 32 L 34 23" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-    <text x="54" y="25" class="title" fill="#3fb950">Graph-RAG 融合决策中枢 (Hybrid Ranking &amp; Fusion)</text>
-    <text x="54" y="42" class="subtitle">Score = RRF(Rank_BM25, Rank_Vector) × (1 + α · PageRank) + 多跳邻居上下文注入</text>
+  <g transform="translate(160, 312)" filter="url(#shadow)">
+    <rect width="640" height="58" rx="8" fill="url(#ragGrad)" stroke="#2ea043" stroke-width="1.5" />
+    <circle cx="28" cy="29" r="14" fill="#2ea043" fill-opacity="0.2" stroke="#3fb950" stroke-width="1" />
+    <path d="M 23 29 L 27 33 L 34 24" fill="none" stroke="#3fb950" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    <text x="54" y="26" class="title" fill="#3fb950">Graph-RAG 复合融合决策中枢 (Hybrid Multi-Signal Ranking &amp; Fusion)</text>
+    <text x="54" y="44" class="subtitle">综合得分 = RRF(Rank_BM25, Rank_Vector) × (1 + α · PageRank) × 时序因子 + 拓扑上下文</text>
   </g>
 
-  <!-- Line from Graph-RAG to Transports -->
-  <path d="M 480 376 L 480 406" fill="none" stroke="#3fb950" stroke-width="1.5" />
-  <path d="M 480 406 L 260 406 L 260 418" fill="none" stroke="#8b949e" stroke-width="1.2" marker-end="url(#arrow)" />
-  <path d="M 480 406 L 700 406 L 700 418" fill="none" stroke="#8b949e" stroke-width="1.2" marker-end="url(#arrow)" />
+  <!-- Line from Graph-RAG to MCP Layer -->
+  <path d="M 480 370 L 480 398" fill="none" stroke="#3fb950" stroke-width="1.5" />
+  <path d="M 480 398 L 250 398 L 250 410" fill="none" stroke="#8b949e" stroke-width="1.2" marker-end="url(#arrow)" />
+  <path d="M 480 398 L 710 398 L 710 410" fill="none" stroke="#8b949e" stroke-width="1.2" marker-end="url(#arrow)" />
 
-  <!-- ==================== BOTTOM LAYER: Deployment Transports ==================== -->
-  <!-- Transport Mode A: Obsidian Plugin -->
-  <g transform="translate(80, 420)" filter="url(#shadow)">
-    <rect width="360" height="110" rx="8" fill="url(#cardGrad)" stroke="#f0883e" stroke-width="1.2" />
-    <rect x="0" y="0" width="360" height="28" rx="8" fill="#2d1f16" />
-    <rect x="0" y="20" width="360" height="8" fill="#2d1f16" />
-    <text x="14" y="19" class="title" fill="#f0883e">形态 A: Obsidian 原生桌面插件 (推荐)</text>
-    <text x="14" y="48" class="item-text">• 内嵌 HTTP/SSE 守护服务 (默认 :23333 端口)</text>
-    <text x="14" y="68" class="item-text">• 挂载 Obsidian 原生 MetadataCache 零延迟更新</text>
-    <text x="14" y="88" class="item-text">• 外部 Agent 共享同一常驻服务，一行 URL 秒级直连</text>
+  <!-- ==================== BOTTOM LAYER: MCP Server & Agent Ecosystem ==================== -->
+  <!-- Left Box: MCP Protocol Full Specification -->
+  <g transform="translate(50, 412)" filter="url(#shadow)">
+    <rect width="410" height="126" rx="8" fill="url(#cardGrad)" stroke="#f0883e" stroke-width="1.2" />
+    <rect x="0" y="0" width="410" height="28" rx="8" fill="#2d1f16" />
+    <rect x="0" y="20" width="410" height="8" fill="#2d1f16" />
+    <text x="14" y="19" class="title" fill="#f0883e">内嵌 MCP 协议中枢 (Embedded MCP Server :23333)</text>
+    <text x="14" y="48" class="item-text">• <tspan font-weight="600" fill="#f0f6fc">8 大核心工具 (Tools)</tspan>: 检索/织网/巡检/解救孤岛/图谱探查/读取</text>
+    <text x="14" y="68" class="item-text">• <tspan font-weight="600" fill="#f0f6fc">3 大动态资源 (Resources)</tspan>: 全局统计 / 核心母笔记 / 收件箱</text>
+    <text x="14" y="88" class="item-text">• <tspan font-weight="600" fill="#f0f6fc">2 大预设工作流 (Prompts)</tspan>: 会话洞察沉淀 / 知识库深度代码审查</text>
+    <text x="14" y="108" class="item-text">• <tspan font-weight="600" fill="#f0f6fc">安全防护</tspan>: Local Bearer Token 访问控制，防止未授权跨站调用</text>
   </g>
 
-  <!-- Transport Mode B: Standalone Stdio -->
-  <g transform="translate(520, 420)" filter="url(#shadow)">
-    <rect width="360" height="110" rx="8" fill="url(#cardGrad)" stroke="#388bfd" stroke-width="1.2" />
-    <rect x="0" y="0" width="360" height="28" rx="8" fill="#14233a" />
-    <rect x="0" y="20" width="360" height="8" fill="#14233a" />
-    <text x="14" y="19" class="title" fill="#58a6ff">形态 B: 独立 Stdio 命令行服务端</text>
-    <text x="14" y="48" class="item-text">• 标准 MCP Stdio 进程管道直连</text>
-    <text x="14" y="68" class="item-text">• 无头极客模式，无需启动或安装 Obsidian 界面</text>
-    <text x="14" y="88" class="item-text">• 零外部网络开销，纯离线安全沙盒运行</text>
+  <!-- Right Box: AI Agent Ecosystem -->
+  <g transform="translate(500, 412)" filter="url(#shadow)">
+    <rect width="410" height="126" rx="8" fill="url(#cardGrad)" stroke="#388bfd" stroke-width="1.2" />
+    <rect x="0" y="0" width="410" height="28" rx="8" fill="#14233a" />
+    <rect x="0" y="20" width="410" height="8" fill="#14233a" />
+    <text x="14" y="19" class="title" fill="#58a6ff">现代 AI Agent 生态无缝直连 (Streamable HTTP / SSE)</text>
+    <text x="14" y="48" class="item-text">• <tspan font-weight="600" fill="#f0f6fc">Cursor 极速连接</tspan>: 原生 Streamable HTTP 协议，即问即查</text>
+    <text x="14" y="68" class="item-text">• <tspan font-weight="600" fill="#f0f6fc">Claude Desktop / WorkBuddy</tspan>: 经典 HTTP-SSE 长期会话直通</text>
+    <text x="14" y="88" class="item-text">• <tspan font-weight="600" fill="#f0f6fc">单进程共享常驻</tspan>: 零外部 Docker / Python 进程膨胀</text>
+    <text x="14" y="108" class="item-text">• <tspan font-weight="600" fill="#f0f6fc">知识进化闭环</tspan>: Agent 自动将提炼成果安全沉淀并反哺双链图谱</text>
   </g>
 </svg>

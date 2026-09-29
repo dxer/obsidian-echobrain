@@ -293,3 +293,236 @@
   font-style: italic;
   padding: 8px 0;
 }
+
+/* Card Reason Badges */
+.echobrain-card-reason.is-semantic-mention {
+  color: var(--interactive-accent);
+  font-weight: 500;
+}
+
+.echobrain-card-reason.is-linked {
+  color: var(--text-muted);
+}
+
+/* Inline Suggest Popup (Triggered via @@) */
+.echobrain-suggest-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+}
+
+.echobrain-suggest-main {
+  width: 100%;
+}
+
+.echobrain-suggest-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.echobrain-suggest-icon {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.echobrain-suggest-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.echobrain-suggest-badge {
+  font-size: 0.72em;
+  background-color: var(--background-modifier-border);
+  color: var(--text-accent);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: normal;
+}
+
+.echobrain-suggest-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 0.75em;
+  color: var(--text-muted);
+  margin-top: 2px;
+  padding-left: 20px;
+}
+
+.echobrain-suggest-folder {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.echobrain-suggest-tags {
+  color: var(--text-accent);
+}
+
+/* Vault Health & Orphan Radar Dashboard */
+.echobrain-health-section {
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.echobrain-health-header h5 {
+  margin: 0 0 10px 0;
+  font-size: 0.95em;
+  color: var(--text-normal);
+}
+
+.echobrain-health-stats {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.echobrain-health-badge {
+  font-size: 0.75em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background-color: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-normal);
+}
+
+.echobrain-health-badge.is-warning {
+  border-color: var(--text-warning);
+  color: var(--text-warning);
+}
+
+.echobrain-health-badge.is-error {
+  border-color: var(--text-error);
+  color: var(--text-error);
+}
+
+.echobrain-health-badge.is-good {
+  border-color: var(--text-success);
+  color: var(--text-success);
+}
+
+.echobrain-orphan-box {
+  border-top: 1px dashed var(--background-modifier-border);
+  padding-top: 8px;
+  margin-top: 6px;
+}
+
+.echobrain-orphan-title {
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.echobrain-orphan-item {
+  background-color: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 6px;
+}
+
+.echobrain-orphan-name-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.echobrain-orphan-link {
+  font-size: 0.85em;
+  font-weight: 500;
+  color: var(--text-normal);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.echobrain-orphan-link:hover {
+  color: var(--interactive-accent);
+  text-decoration: underline;
+}
+
+.echobrain-rescue-btn {
+  font-size: 0.75em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  white-space: nowrap;
+}
+
+.echobrain-rescue-btn:hover {
+  opacity: 0.9;
+}
+
+.echobrain-rescue-targets {
+  margin-top: 6px;
+}
+
+.echobrain-rescue-target-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background-color: var(--background-secondary);
+  border-radius: 4px;
+  margin-top: 4px;
+}
+
+.echobrain-rescue-target-name {
+  font-size: 0.8em;
+  color: var(--text-accent);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.echobrain-rescue-target-name:hover {
+  text-decoration: underline;
+}
+
+.echobrain-connect-btn {
+  font-size: 0.72em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  background-color: transparent;
+  border: 1px solid var(--interactive-accent);
+  color: var(--interactive-accent);
+  white-space: nowrap;
+}
+
+.echobrain-connect-btn:hover {
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.echobrain-rescue-empty {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.echobrain-health-good {
+  font-size: 0.82em;
+  color: var(--text-success);
+  padding: 4px 0;
+}
+
