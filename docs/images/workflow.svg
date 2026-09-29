@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 320" width="100%" height="100%">
+  <defs>
+    <linearGradient id="flowBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1117" />
+      <stop offset="100%" stop-color="#161b22" />
+    </linearGradient>
+
+    <linearGradient id="stepGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#21262d" />
+      <stop offset="100%" stop-color="#161b22" />
+    </linearGradient>
+
+    <filter id="cardShadow" x="-5%" y="-5%" width="110%" height="115%" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#000000" flood-opacity="0.35" />
+    </filter>
+
+    <marker id="flowArrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 8 5 L 0 9 z" fill="#58a6ff" />
+    </marker>
+  </defs>
+
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .step-num { font-size: 10px; font-weight: 800; fill: #58a6ff; letter-spacing: 0.5px; }
+    .step-title { font-size: 13px; font-weight: 700; fill: #f0f6fc; }
+    .step-desc { font-size: 11px; fill: #8b949e; line-height: 1.4; }
+    .code-tag { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 10px; fill: #79c0ff; background: #1f242c; }
+  </style>
+
+  <!-- Background -->
+  <rect width="960" height="320" rx="12" fill="url(#flowBg)" stroke="#30363d" stroke-width="1" />
+
+  <!-- Flow header -->
+  <g transform="translate(36, 26)">
+    <text x="0" y="0" font-size="14" font-weight="700" fill="#f0f6fc">Graph-RAG 检索与上下文注入工作流程 (Query &amp; Retrieval Flow)</text>
+    <text x="0" y="18" font-size="11" fill="#8b949e">从外部 Agent 自然语言提问，到多模态加权融合召回与上下文注入的全生命周期</text>
+  </g>
+
+  <!-- ==================== STEP CARDS ==================== -->
+
+  <!-- Step 1: Agent Invocation -->
+  <g transform="translate(36, 76)" filter="url(#cardShadow)">
+    <rect width="160" height="200" rx="8" fill="url(#stepGrad)" stroke="#30363d" stroke-width="1" />
+    <rect x="0" y="0" width="160" height="24" rx="8" fill="#1b2129" />
+    <rect x="0" y="16" width="160" height="8" fill="#1b2129" />
+    <text x="12" y="16" class="step-num">STEP 01</text>
+    
+    <text x="12" y="46" class="step-title">Agent 发起调用</text>
+    <text x="12" y="68" class="step-desc">Cursor / Claude</text>
+    <text x="12" y="84" class="step-desc">触发 MCP Tool：</text>
+    <rect x="12" y="92" width="136" height="22" rx="4" fill="#161b22" stroke="#30363d" />
+    <text x="18" y="107" class="code-tag">search_memory</text>
+
+    <text x="12" y="136" class="step-desc">输入自然语言提问</text>
+    <text x="12" y="152" class="step-desc">或当前正在编辑的</text>
+    <text x="12" y="168" class="step-desc">代码/报错上下文</text>
+  </g>
+
+  <!-- Arrow 1 -> 2 -->
+  <path d="M 196 176 L 216 176" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#flowArrow)" />
+
+  <!-- Step 2: Dual Parallel Retrieval -->
+  <g transform="translate(224, 76)" filter="url(#cardShadow)">
+    <rect width="160" height="200" rx="8" fill="url(#stepGrad)" stroke="#58a6ff" stroke-width="1.2" />
+    <rect x="0" y="0" width="160" height="24" rx="8" fill="#14233a" />
+    <rect x="0" y="16" width="160" height="8" fill="#14233a" />
+    <text x="12" y="16" class="step-num" fill="#79c0ff">STEP 02</text>
+    
+    <text x="12" y="46" class="step-title">双轨并行检索</text>
+    <text x="12" y="68" class="step-desc">1. <tspan font-weight="600" fill="#f0f6fc">BM25 词频匹配</tspan></text>
+    <text x="24" y="84" class="step-desc">捕获专有名词/代码</text>
+
+    <text x="12" y="108" class="step-desc">2. <tspan font-weight="600" fill="#f0f6fc">Dense Vector</tspan></text>
+    <text x="24" y="124" class="step-desc">WASM 向量模型推理</text>
+    <text x="24" y="140" class="step-desc">计算余弦相似度</text>
+
+    <text x="12" y="164" class="step-desc">3. <tspan font-weight="600" fill="#f0f6fc">标题与标签加权</tspan></text>
+    <text x="24" y="180" class="step-desc">强化元数据命中度</text>
+  </g>
+
+  <!-- Arrow 2 -> 3 -->
+  <path d="M 384 176 L 404 176" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#flowArrow)" />
+
+  <!-- Step 3: Graph Expansion -->
+  <g transform="translate(412, 76)" filter="url(#cardShadow)">
+    <rect width="160" height="200" rx="8" fill="url(#stepGrad)" stroke="#bc8cff" stroke-width="1.2" />
+    <rect x="0" y="0" width="160" height="24" rx="8" fill="#241b35" />
+    <rect x="0" y="16" width="160" height="8" fill="#241b35" />
+    <text x="12" y="16" class="step-num" fill="#d2a8ff">STEP 03</text>
+    
+    <text x="12" y="46" class="step-title">双链图谱展开</text>
+    <text x="12" y="68" class="step-desc">1. <tspan font-weight="600" fill="#f0f6fc">PageRank 增益</tspan></text>
+    <text x="24" y="84" class="step-desc">核心母笔记权威赋权</text>
+
+    <text x="12" y="108" class="step-desc">2. <tspan font-weight="600" fill="#f0f6fc">出度与入度溯源</tspan></text>
+    <text x="24" y="124" class="step-desc">提取 Backlinks 反链</text>
+
+    <text x="12" y="148" class="step-desc">3. <tspan font-weight="600" fill="#f0f6fc">BFS 邻域漫游</tspan></text>
+    <text x="24" y="164" class="step-desc">多跳探索关联脉络</text>
+    <text x="24" y="180" class="step-desc">发现潜在知识锚点</text>
+  </g>
+
+  <!-- Arrow 3 -> 4 -->
+  <path d="M 572 176 L 592 176" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#flowArrow)" />
+
+  <!-- Step 4: RRF Fusion -->
+  <g transform="translate(600, 76)" filter="url(#cardShadow)">
+    <rect width="160" height="200" rx="8" fill="url(#stepGrad)" stroke="#2ea043" stroke-width="1.2" />
+    <rect x="0" y="0" width="160" height="24" rx="8" fill="#13271e" />
+    <rect x="0" y="16" width="160" height="8" fill="#13271e" />
+    <text x="12" y="16" class="step-num" fill="#3fb950">STEP 04</text>
+    
+    <text x="12" y="46" class="step-title">RRF 融合排序</text>
+    <text x="12" y="68" class="step-desc">1. <tspan font-weight="600" fill="#f0f6fc">倒数排名融合</tspan></text>
+    <text x="24" y="84" class="step-desc">非线性归一化评分</text>
+
+    <text x="12" y="108" class="step-desc">2. <tspan font-weight="600" fill="#f0f6fc">时序衰减乘子</tspan></text>
+    <text x="24" y="124" class="step-desc">时间因子动态微调</text>
+
+    <text x="12" y="148" class="step-desc">3. <tspan font-weight="600" fill="#f0f6fc">摘要与高亮截取</tspan></text>
+    <text x="24" y="164" class="step-desc">提炼核心 Markdown</text>
+    <text x="24" y="180" class="step-desc">生成 Top-K 候选集</text>
+  </g>
+
+  <!-- Arrow 4 -> 5 -->
+  <path d="M 760 176 L 780 176" fill="none" stroke="#58a6ff" stroke-width="2" marker-end="url(#flowArrow)" />
+
+  <!-- Step 5: Grounded Synthesis -->
+  <g transform="translate(788, 76)" filter="url(#cardShadow)">
+    <rect width="136" height="200" rx="8" fill="url(#stepGrad)" stroke="#30363d" stroke-width="1" />
+    <rect x="0" y="0" width="136" height="24" rx="8" fill="#1b2129" />
+    <rect x="0" y="16" width="136" height="8" fill="#1b2129" />
+    <text x="12" y="16" class="step-num">STEP 05</text>
+    
+    <text x="12" y="46" class="step-title">上下文精准注入</text>
+    <text x="12" y="68" class="step-desc">私有知识格式化为</text>
+    <text x="12" y="84" class="step-desc">严谨事实 Markdown</text>
+    <text x="12" y="100" class="step-desc">返回给 Host Agent</text>
+
+    <text x="12" y="132" class="step-desc">LLM 基于验证经验</text>
+    <text x="12" y="148" class="step-desc">生成无幻觉代码、</text>
+    <text x="12" y="164" class="step-desc">配置与决策方案</text>
+  </g>
+</svg>

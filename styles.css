@@ -1,0 +1,210 @@
+/* EchoBrain Local Obsidian Plugin Styles */
+
+.echobrain-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 0.8em;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.echobrain-badge.status-online {
+  background-color: rgba(46, 204, 113, 0.2);
+  color: var(--text-success);
+  border: 1px solid var(--text-success);
+}
+
+.echobrain-badge.status-offline {
+  background-color: rgba(231, 76, 60, 0.2);
+  color: var(--text-error);
+  border: 1px solid var(--text-error);
+}
+
+/* Settings Panel */
+.echobrain-settings-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  margin-bottom: 20px;
+  background-color: var(--background-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.echobrain-settings-url {
+  font-family: var(--font-monospace);
+  font-size: 0.9em;
+  color: var(--text-muted);
+  margin-top: 6px;
+}
+
+.echobrain-btn-group button {
+  margin-left: 8px;
+}
+
+.echobrain-client-card {
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.echobrain-client-card h4 {
+  margin-top: 0;
+  margin-bottom: 6px;
+}
+
+.echobrain-client-card pre {
+  background-color: var(--background-primary);
+  padding: 10px;
+  border-radius: 6px;
+  font-size: 0.85em;
+  overflow-x: auto;
+}
+
+/* Sidebar View */
+.echobrain-view-container {
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.echobrain-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.echobrain-header h4 {
+  margin: 0;
+}
+
+.echobrain-active-section {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.echobrain-active-label.empty {
+  font-style: italic;
+}
+
+.echobrain-card {
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.echobrain-card:hover {
+  border-color: var(--interactive-accent);
+}
+
+.echobrain-card-title {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.echobrain-card-title a {
+  color: var(--text-normal);
+  text-decoration: none;
+}
+
+.echobrain-card-title a:hover {
+  color: var(--interactive-accent);
+  text-decoration: underline;
+}
+
+.echobrain-card-reason {
+  font-size: 0.82em;
+  color: var(--interactive-accent);
+  margin-bottom: 6px;
+}
+
+.echobrain-card-snippet {
+  font-size: 0.82em;
+  color: var(--text-muted);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 80px;
+  overflow: hidden;
+}
+
+.echobrain-card-graph {
+  font-size: 0.8em;
+  color: var(--text-accent);
+  margin-top: 8px;
+  border-top: 1px dashed var(--background-modifier-border);
+  padding-top: 6px;
+}
+
+.echobrain-empty-card {
+  text-align: center;
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 8px;
+}
+
+/* Activity Log */
+.echobrain-log-section {
+  margin-top: 20px;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 12px;
+}
+
+.echobrain-log-section h5 {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+.echobrain-log-item {
+  background-color: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  font-size: 0.8em;
+}
+
+.echobrain-log-top {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.echobrain-log-client {
+  font-weight: 600;
+  color: var(--interactive-accent);
+}
+
+.echobrain-log-tool {
+  font-family: var(--font-monospace);
+  color: var(--text-normal);
+}
+
+.echobrain-log-time {
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.echobrain-log-summary {
+  color: var(--text-muted);
+  word-break: break-all;
+}
+
+.echobrain-empty-log {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px 0;
+}
