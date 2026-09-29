@@ -5,6 +5,6 @@
   "minAppVersion": "1.4.0",
   "description": "Embedded Local MCP Server (HTTP/SSE) & Proactive Recall for Cursor, Claude Desktop, and AI Agents.",
   "author": "知白AI",
-  "authorUrl": "https://github.com/echobrain-ai",
+  "authorUrl": "https://github.com/dxer/obsidian-echobrain",
   "isDesktopOnly": true
 }
