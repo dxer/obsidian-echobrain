@@ -1,12 +1,14 @@
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
+import http from 'node:http';
+import https from 'node:https';
 import { pipeline, env } from '@xenova/transformers';
 import * as ort from 'onnxruntime-web';
 import { EmbeddingMode, EchoBrainPluginSettings } from './types.js';
 
 // Configure WebAssembly ONNX engine
-env.backends.onnx = ort;
+env.backends.onnx = ort as any;
 env.remoteHost = 'https://hf-mirror.com/';
 
 export interface CachedVector {
@@ -71,6 +73,13 @@ export class PluginEmbeddingService {
     if (!fsSync.existsSync(wasmFile)) return false;
 
     return true;
+  }
+
+  public getCachedVector(relativePath: string, mtime?: number): number[] | undefined {
+    const cached = this.vectorCache.get(relativePath);
+    if (!cached) return undefined;
+    if (mtime !== undefined && cached.mtime !== mtime) return undefined;
+    return cached.vector;
   }
 
   /**
@@ -138,7 +147,7 @@ export class PluginEmbeddingService {
   }
 
   /**
-   * Download the 40MB bge-small-zh model on-demand with progress callback using streaming fetch
+   * Download the 40MB bge-small-zh model on-demand with progress callback using robust Node streaming
    */
   public async downloadLocalModel(
     onProgress: (percent: number, statusText: string) => void
@@ -152,27 +161,78 @@ export class PluginEmbeddingService {
       const wasmDir = path.join(this.modelsDirPath, 'wasm');
       await fs.mkdir(wasmDir, { recursive: true });
 
-      // 1. Download wasm runtime file first if not exists
+      // 1. Prepare wasm runtime file first if not exists
       const wasmDest = path.join(wasmDir, 'ort-wasm-simd.wasm');
       if (!fsSync.existsSync(wasmDest) || fsSync.statSync(wasmDest).size === 0) {
-        onProgress(5, '正在下载 WebAssembly 运行环境 (ort-wasm)...');
-        const wasmUrl = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort-wasm-simd.wasm';
-        await this.downloadSingleFile(wasmUrl, wasmDest);
+        onProgress(3, '正在获取 WebAssembly 运行环境 (ort-wasm)...');
+
+        // Check if available locally first (e.g. in node_modules or plugin folder)
+        let copiedLocally = false;
+        const localCandidates = [
+          path.resolve(__dirname, 'node_modules/onnxruntime-web/dist/ort-wasm-simd.wasm'),
+          path.resolve(__dirname, 'node_modules/@xenova/transformers/dist/ort-wasm-simd.wasm'),
+          path.resolve(this.vaultBasePath, '.obsidian/plugins/echobrain-local/ort-wasm-simd.wasm')
+        ];
+        for (const cand of localCandidates) {
+          if (fsSync.existsSync(cand) && fsSync.statSync(cand).size > 0) {
+            try {
+              fsSync.copyFileSync(cand, wasmDest);
+              copiedLocally = true;
+              console.log('[EchoBrain Embedding] Copied ort-wasm-simd.wasm from local module:', cand);
+              break;
+            } catch {}
+          }
+        }
+
+        if (!copiedLocally) {
+          const wasmUrls = [
+            'https://cdn.bootcdn.net/ajax/libs/onnxruntime-web/1.14.0/ort-wasm-simd.wasm',
+            'https://registry.npmmirror.com/onnxruntime-web/1.14.0/files/dist/ort-wasm-simd.wasm',
+            'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort-wasm-simd.wasm'
+          ];
+          await this.downloadSingleFileWithFallback(
+            wasmUrls,
+            wasmDest,
+            (received, total) => {
+              if (total > 0) {
+                const mbRec = (received / (1024 * 1024)).toFixed(1);
+                const mbTot = (total / (1024 * 1024)).toFixed(1);
+                const pct = Math.min(10, Math.floor((received / total) * 10));
+                onProgress(pct, `下载运行时 ort-wasm-simd.wasm (${mbRec}MB / ${mbTot}MB)`);
+              }
+            }
+          );
+        }
       }
 
-      // 2. Download model files
-      const baseUrl = 'https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/main/';
+      // 2. Download model files with Multi-Source Fallback (ModelScope -> HF-Mirror -> HuggingFace)
       let totalFiles = MODEL_FILES.length;
 
       for (let i = 0; i < totalFiles; i++) {
         const fileRel = MODEL_FILES[i];
         const destFile = path.join(targetDir, fileRel);
-        const fileUrl = `${baseUrl}${fileRel}`;
+        const fileName = path.basename(fileRel);
+
+        // Check if file is already valid
+        if (fsSync.existsSync(destFile) && fsSync.statSync(destFile).size > 0) {
+          const basePercent = 10 + Math.floor(((i + 1) / totalFiles) * 85);
+          onProgress(basePercent, `[已存在] ${fileName}`);
+          continue;
+        }
+
+        const candidateUrls = [
+          // 1. ModelScope (Alibaba Open Source Hub - ultra fast in China, direct OSS download)
+          `https://modelscope.cn/api/v1/models/Xenova/bge-small-zh-v1.5/repo?Revision=master&FilePath=${encodeURIComponent(fileRel)}`,
+          // 2. HF-Mirror
+          `https://hf-mirror.com/Xenova/bge-small-zh-v1.5/resolve/main/${fileRel}`,
+          // 3. Official Hugging Face
+          `https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/main/${fileRel}`
+        ];
 
         const basePercent = 10 + Math.floor((i / totalFiles) * 85);
-        onProgress(basePercent, `正在下载 [${i + 1}/${totalFiles}] ${path.basename(fileRel)}...`);
+        onProgress(basePercent, `正在拉取 [${i + 1}/${totalFiles}] ${fileName}...`);
 
-        await this.downloadSingleFile(fileUrl, destFile, (received, total) => {
+        await this.downloadSingleFileWithFallback(candidateUrls, destFile, (received, total) => {
           if (total > 0) {
             const fileFraction = received / total;
             const currentPercent = Math.min(98, Math.floor(basePercent + fileFraction * (85 / totalFiles)));
@@ -180,13 +240,13 @@ export class PluginEmbeddingService {
             const mbTotal = (total / (1024 * 1024)).toFixed(1);
             onProgress(
               currentPercent,
-              `下载中 [${i + 1}/${totalFiles}] ${path.basename(fileRel)} (${mbReceived}MB / ${mbTotal}MB)`
+              `下载中 [${i + 1}/${totalFiles}] ${fileName} (${mbReceived}MB / ${mbTotal}MB)`
             );
           }
         });
       }
 
-      onProgress(100, '模型下载完成！正在初始化向量引擎...');
+      onProgress(100, '模型权重拉取完成！正在加载向量引擎...');
       const ok = await this.initLocalPipeline();
       this.isDownloading = false;
       return ok;
@@ -198,59 +258,119 @@ export class PluginEmbeddingService {
   }
 
   /**
-   * Stream download single file with modern fetch (automatically follows 301/302/307 redirects)
+   * Download a single file trying multiple source URLs with streaming and redirect handling
    */
-  private async downloadSingleFile(
-    urlStr: string,
+  private async downloadSingleFileWithFallback(
+    candidateUrls: string[],
     destPath: string,
     onByteProgress?: (receivedBytes: number, totalBytes: number) => void
   ): Promise<void> {
-    const res = await fetch(urlStr, {
-      redirect: 'follow',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) EchoBrain-Downloader'
+    let lastError: Error | null = null;
+    for (const url of candidateUrls) {
+      try {
+        await this.streamDownload(url, destPath, onByteProgress);
+        if (fsSync.existsSync(destPath) && fsSync.statSync(destPath).size > 0) {
+          return;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[EchoBrain Embedding] Download failed from ${url}, switching to next source. Reason:`, err.message);
+      }
+    }
+    throw lastError || new Error(`Failed to download ${path.basename(destPath)} from all available sources.`);
+  }
+
+  /**
+   * Pure Node.js streaming download with automatic redirect handling (Bypasses browser CORS & fetch limitations)
+   */
+  private streamDownload(
+    urlStr: string,
+    destPath: string,
+    onProgress?: (receivedBytes: number, totalBytes: number) => void,
+    maxRedirects = 8
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (maxRedirects <= 0) {
+        return reject(new Error(`Too many redirects when downloading ${urlStr}`));
+      }
+
+      try {
+        const u = new URL(urlStr);
+        const mod = u.protocol === 'https:' ? https : http;
+        const tmpPath = `${destPath}.tmp-${Date.now()}`;
+        const dir = path.dirname(destPath);
+        if (!fsSync.existsSync(dir)) fsSync.mkdirSync(dir, { recursive: true });
+
+        const req = mod.get(u, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) EchoBrain-Downloader',
+            'Accept': '*/*'
+          }
+        }, (res) => {
+          // Handle redirects
+          if (res.statusCode && [301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+            const nextUrl = new URL(res.headers.location, urlStr).href;
+            res.resume();
+            resolve(this.streamDownload(nextUrl, destPath, onProgress, maxRedirects - 1));
+            return;
+          }
+
+          if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+            res.resume();
+            return reject(new Error(`HTTP ${res.statusCode} from ${u.hostname}`));
+          }
+
+          const totalBytes = Number(res.headers['content-length']) || 0;
+          let receivedBytes = 0;
+          const fileStream = fsSync.createWriteStream(tmpPath);
+
+          res.on('data', (chunk: Buffer) => {
+            receivedBytes += chunk.length;
+            fileStream.write(chunk);
+            if (onProgress && totalBytes > 0) {
+              onProgress(receivedBytes, totalBytes);
+            }
+          });
+
+          res.on('end', () => {
+            fileStream.end(() => {
+              try {
+                if (fsSync.existsSync(destPath)) {
+                  fsSync.unlinkSync(destPath);
+                }
+                fsSync.renameSync(tmpPath, destPath);
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
+            });
+          });
+
+          res.on('error', (err) => {
+            fileStream.destroy();
+            try { if (fsSync.existsSync(tmpPath)) fsSync.unlinkSync(tmpPath); } catch {}
+            reject(err);
+          });
+
+          fileStream.on('error', (err) => {
+            try { if (fsSync.existsSync(tmpPath)) fsSync.unlinkSync(tmpPath); } catch {}
+            reject(err);
+          });
+        });
+
+        req.on('error', (err) => {
+          reject(err);
+        });
+
+        // 60s socket timeout
+        req.setTimeout(60000, () => {
+          req.destroy();
+          reject(new Error(`Connection timeout for ${u.hostname}`));
+        });
+      } catch (err) {
+        reject(err);
       }
     });
-
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status} when downloading ${path.basename(destPath)}`);
-    }
-
-    const totalBytes = Number(res.headers.get('content-length')) || 0;
-    let receivedBytes = 0;
-
-    const dir = path.dirname(destPath);
-    if (!fsSync.existsSync(dir)) {
-      await fs.mkdir(dir, { recursive: true });
-    }
-
-    const fileStream = fsSync.createWriteStream(destPath);
-
-    if (res.body && typeof (res.body as any).getReader === 'function') {
-      const reader = (res.body as any).getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value) {
-          receivedBytes += value.length;
-          fileStream.write(Buffer.from(value));
-          if (onByteProgress && totalBytes > 0) {
-            onByteProgress(receivedBytes, totalBytes);
-          }
-        }
-      }
-      fileStream.end();
-      await new Promise<void>((resolve, reject) => {
-        fileStream.on('finish', () => resolve());
-        fileStream.on('error', reject);
-      });
-    } else {
-      const arrayBuffer = await res.arrayBuffer();
-      await fs.writeFile(destPath, Buffer.from(arrayBuffer));
-      if (onByteProgress && totalBytes > 0) {
-        onByteProgress(totalBytes, totalBytes);
-      }
-    }
   }
 
   /**
@@ -283,45 +403,68 @@ export class PluginEmbeddingService {
   }
 
   /**
-   * Fetch embedding from standard OpenAI-compatible /v1/embeddings endpoint
+   * Fetch embedding from standard OpenAI-compatible /v1/embeddings endpoint using Node HTTP/HTTPS (CORS-free)
    */
   private async fetchApiEmbedding(text: string): Promise<number[] | null> {
-    try {
-      const cleanUrl = this.settings.apiBaseUrl.replace(/\/+$/, '');
-      const endpoint = cleanUrl.endsWith('/embeddings') ? cleanUrl : `${cleanUrl}/embeddings`;
+    return new Promise((resolve) => {
+      try {
+        const cleanUrl = this.settings.apiBaseUrl.replace(/\/+$/, '');
+        const endpoint = cleanUrl.endsWith('/embeddings') ? cleanUrl : `${cleanUrl}/embeddings`;
+        const u = new URL(endpoint);
+        const mod = u.protocol === 'https:' ? https : http;
 
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      if (this.settings.apiKey) {
-        headers['Authorization'] = `Bearer ${this.settings.apiKey}`;
+        const body = JSON.stringify({
+          model: this.settings.apiModel || 'text-embedding-3-small',
+          input: text.slice(0, 2000)
+        });
+
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body)),
+          'User-Agent': 'Mozilla/5.0 EchoBrain-Embedding'
+        };
+        if (this.settings.apiKey) {
+          headers['Authorization'] = `Bearer ${this.settings.apiKey}`;
+        }
+
+        const req = mod.request(u, {
+          method: 'POST',
+          headers
+        }, (res) => {
+          let resData = '';
+          res.on('data', chunk => resData += chunk);
+          res.on('end', () => {
+            try {
+              if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                const data = JSON.parse(resData);
+                if (data?.data?.[0]?.embedding) {
+                  return resolve(data.data[0].embedding);
+                }
+              }
+              resolve(null);
+            } catch {
+              resolve(null);
+            }
+          });
+        });
+
+        req.on('error', (e) => {
+          console.error('[EchoBrain Embedding] API error:', e.message);
+          resolve(null);
+        });
+
+        req.setTimeout(15000, () => {
+          req.destroy();
+          resolve(null);
+        });
+
+        req.write(body);
+        req.end();
+      } catch (err: any) {
+        console.error('[EchoBrain Embedding] API exception:', err.message);
+        resolve(null);
       }
-
-      const body = JSON.stringify({
-        model: this.settings.apiModel || 'text-embedding-3-small',
-        input: text.slice(0, 2000)
-      });
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers,
-        body
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`API Error (${response.status}): ${errText}`);
-      }
-
-      const data = await response.json();
-      if (data?.data?.[0]?.embedding) {
-        return data.data[0].embedding;
-      }
-      return null;
-    } catch (err: any) {
-      console.error('[EchoBrain Embedding] API request error:', err.message);
-      return null;
-    }
+    });
   }
 
   public async getDocumentVector(

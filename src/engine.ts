@@ -40,11 +40,17 @@ export class VaultEngine {
     this.isIndexing = true;
 
     try {
+      this.rebuildLinkGraph();
       const files = this.app.vault.getMarkdownFiles();
-      this.documents.clear();
+      const batchSize = 25;
 
-      for (const file of files) {
-        await this.indexFile(file);
+      for (let i = 0; i < files.length; i += batchSize) {
+        const batch = files.slice(i, i + batchSize);
+        for (const file of batch) {
+          await this.indexFile(file, false);
+        }
+        // Yield to the main event loop to ensure zero freezing during Obsidian startup
+        await new Promise(r => setTimeout(r, 10));
       }
 
       this.rebuildLinkGraph();
@@ -56,9 +62,9 @@ export class VaultEngine {
   }
 
   /**
-   * Index or update a single file
+   * Index or update a single file (computes embedding on-demand or uses cache)
    */
-  public async indexFile(file: TFile): Promise<void> {
+  public async indexFile(file: TFile, computeEmbedding: boolean = false): Promise<void> {
     if (file.extension !== 'md') return;
 
     try {
@@ -102,9 +108,9 @@ export class VaultEngine {
       }
       for (const t of tokenize(content)) tokens.add(t);
 
-      // Vector embedding if available
-      let vector: number[] | undefined;
-      if (this.embeddingService.isAvailable()) {
+      // Instant check for cached vector (0ms, avoids blocking during indexing)
+      let vector: number[] | undefined = this.embeddingService.getCachedVector(file.path, file.stat.mtime);
+      if (!vector && computeEmbedding && this.embeddingService.isAvailable()) {
         const textToEmbed = `${title}\n${Array.from(tagSet).map(t => '#' + t).join(' ')}\n${content.slice(0, 800)}`;
         const vec = await this.embeddingService.getDocumentVector(file.path, textToEmbed, file.stat.mtime);
         if (vec) vector = vec;
@@ -168,7 +174,7 @@ export class VaultEngine {
 
       for (const n of nodes) {
         const outDegree = Object.keys(resolvedLinks[n] || {}).length;
-        if (outDegree === 0) sinkSum += pr.get(n)!;
+        if (outDegree === 0) sinkSum += pr.get(n) || 0;
       }
 
       const baseScore = (0.15 / N) + (0.85 * sinkSum / N);
@@ -178,8 +184,9 @@ export class VaultEngine {
         const incomingSources = this.backlinks.get(n);
         if (incomingSources) {
           for (const src of incomingSources) {
-            const srcOutDegree = Object.keys(resolvedLinks[src] || {}).length || 1;
-            incomingSum += pr.get(src)! / srcOutDegree;
+            const srcPr = pr.get(src) || 0;
+            const srcOutDegree = Math.max(1, Object.keys(resolvedLinks[src] || {}).length);
+            incomingSum += srcPr / srcOutDegree;
           }
         }
         nextPr.set(n, baseScore + 0.85 * incomingSum);
@@ -189,7 +196,7 @@ export class VaultEngine {
 
     // Normalize
     for (const [node, score] of pr.entries()) {
-      const normalizedScore = parseFloat((score * N).toFixed(4));
+      const normalizedScore = isFinite(score) ? parseFloat((score * N).toFixed(4)) : 1.0;
       this.pageRanks.set(node, normalizedScore);
       const doc = this.documents.get(node);
       if (doc) doc.pageRank = normalizedScore;
@@ -206,7 +213,7 @@ export class VaultEngine {
     expandGraphHops?: number;
     mode?: string;
   }): Promise<SearchResultItem[]> {
-    const { query, timeFilter = 'all', limit = 5, expandGraphHops = 1 } = options;
+    const { query, timeFilter = 'all', limit = 5, expandGraphHops = 1, mode = 'hybrid' } = options;
     const allDocs = Array.from(this.documents.values());
     if (allDocs.length === 0 || !query || !query.trim()) return [];
 
@@ -284,9 +291,24 @@ export class VaultEngine {
       const queryVec = await this.embeddingService.getEmbedding(query);
       if (queryVec) {
         const vecScored: { path: string; sim: number }[] = [];
+        
+        // Two-stage candidate selection: Top-30 BM25 candidates + all documents with cached vectors
+        const candidateSet = new Set<IndexedDocument>();
+        bm25Scored.slice(0, 30).forEach(s => {
+          const doc = this.documents.get(s.path);
+          if (doc) candidateSet.add(doc);
+        });
         for (const doc of eligibleDocs) {
+          if (doc.vector && doc.vector.length > 0) {
+            candidateSet.add(doc);
+          }
+        }
+
+        let onDemandCount = 0;
+        for (const doc of candidateSet) {
           let vec = doc.vector;
-          if (!vec) {
+          if (!vec && onDemandCount < 15) {
+            onDemandCount++;
             const textToEmbed = `${doc.title}\n${doc.tags.map(t => '#' + t).join(' ')}\n${doc.content.slice(0, 800)}`;
             const computed = await this.embeddingService.getDocumentVector(doc.path, textToEmbed, doc.mtime);
             if (computed) {
@@ -306,6 +328,9 @@ export class VaultEngine {
           vectorRankMap.set(item.path, index + 1);
           vectorSimMap.set(item.path, item.sim);
         });
+        if (onDemandCount > 0) {
+          this.embeddingService.saveCache();
+        }
       }
     }
 
@@ -324,7 +349,8 @@ export class VaultEngine {
       const bm25Rank = bm25RankMap.get(docPath);
       const vecRank = vectorRankMap.get(docPath);
       const vecSim = vectorSimMap.get(docPath) || 0;
-      const pr = this.pageRanks.get(docPath) || 1.0;
+      const rawPr = this.pageRanks.get(docPath);
+      const pr = (rawPr !== undefined && !isNaN(rawPr) && isFinite(rawPr)) ? rawPr : 1.0;
       const prBoost = 1.0 + 0.15 * Math.min(pr, 5.0);
 
       const ageDays = (now - doc.mtime) / oneDayMs;
@@ -454,10 +480,12 @@ export class VaultEngine {
    * Traverse neighborhood using Obsidian's resolvedLinks & backlinks
    */
   public getNeighbors(path: string, maxHops: number = 1, limit: number = 6): GraphNeighborItem[] {
+    const doc = this.getDocument(path);
+    const targetPath = doc ? doc.path : path;
     const resolvedLinks = this.app.metadataCache.resolvedLinks || {};
     const results: GraphNeighborItem[] = [];
-    const visited = new Set<string>([path]);
-    const queue: [string, number][] = [[path, 0]];
+    const visited = new Set<string>([targetPath]);
+    const queue: [string, number][] = [[targetPath, 0]];
 
     while (queue.length > 0 && results.length < limit) {
       const [curr, hops] = queue.shift()!;
@@ -468,10 +496,10 @@ export class VaultEngine {
       for (const target of Object.keys(forwardMap)) {
         if (!visited.has(target)) {
           visited.add(target);
-          const doc = this.documents.get(target);
+          const neighborDoc = this.documents.get(target);
           results.push({
             path: target,
-            title: doc?.title || target.replace(/\.md$/, ''),
+            title: neighborDoc?.title || target.replace(/\.md$/, ''),
             relation: 'cites',
             hops: hops + 1
           });
@@ -487,10 +515,10 @@ export class VaultEngine {
       for (const source of backSet) {
         if (!visited.has(source)) {
           visited.add(source);
-          const doc = this.documents.get(source);
+          const neighborDoc = this.documents.get(source);
           results.push({
             path: source,
-            title: doc?.title || source.replace(/\.md$/, ''),
+            title: neighborDoc?.title || source.replace(/\.md$/, ''),
             relation: 'cited_by',
             hops: hops + 1
           });
@@ -507,9 +535,11 @@ export class VaultEngine {
    * Get direct incoming and outgoing links for a document
    */
   public getLinkDetails(path: string): { forwardLinks: string[]; backlinks: string[] } {
+    const doc = this.getDocument(path);
+    const targetPath = doc ? doc.path : path;
     const resolvedLinks = this.app.metadataCache.resolvedLinks || {};
-    const forwardLinks = Object.keys(resolvedLinks[path] || {});
-    const backSet = this.backlinks.get(path) || new Set();
+    const forwardLinks = Object.keys(resolvedLinks[targetPath] || {});
+    const backSet = this.backlinks.get(targetPath) || new Set();
     const backlinks = Array.from(backSet);
     return { forwardLinks, backlinks };
   }
@@ -518,23 +548,32 @@ export class VaultEngine {
    * Save an insight to the Inbox folder using Obsidian native app.vault API
    */
   public async saveInsight(options: { title: string; content: string; tags?: string[]; category?: string }): Promise<string> {
-    const inboxPath = this.inboxFolder.replace(/\\/g, '/').replace(/\/+$/, '');
+    const inboxPath = (this.inboxFolder || 'Inbox').replace(/\\/g, '/').replace(/\/+$/, '').trim();
     
     // Ensure inbox folder exists
-    const folder = this.app.vault.getAbstractFileByPath(inboxPath);
-    if (!folder) {
-      await this.app.vault.createFolder(inboxPath);
+    if (inboxPath) {
+      const folder = this.app.vault.getAbstractFileByPath(inboxPath);
+      if (!folder) {
+        try {
+          await this.app.vault.createFolder(inboxPath);
+        } catch {
+          // Folder may have been created concurrently or already exists
+        }
+      }
     }
 
     const now = new Date();
     const datePrefix = now.toISOString().slice(0, 10);
     const cleanTitle = options.title.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, '_').slice(0, 50);
     const baseName = `${datePrefix}-${cleanTitle}`;
-    let filePath = `${inboxPath}/${baseName}.md`;
+    let filePath = inboxPath ? `${inboxPath}/${baseName}.md` : `${baseName}.md`;
 
     // Avoid collision
     if (this.app.vault.getAbstractFileByPath(filePath)) {
-      filePath = `${inboxPath}/${baseName}-${Date.now().toString().slice(-4)}.md`;
+      const suffix = Date.now().toString().slice(-4);
+      filePath = inboxPath
+        ? `${inboxPath}/${baseName}-${suffix}.md`
+        : `${baseName}-${suffix}.md`;
     }
 
     const tagsArr = options.tags || ['agent-insight'];
@@ -559,7 +598,52 @@ export class VaultEngine {
   }
 
   public getDocument(path: string): IndexedDocument | undefined {
-    return this.documents.get(path);
+    if (!path) return undefined;
+
+    // 1. Direct path lookup
+    let clean = path.trim().replace(/^\[\[|\]\]$/g, '').trim();
+    if (this.documents.has(clean)) {
+      return this.documents.get(clean);
+    }
+
+    // 2. Normalized slashes
+    clean = clean.replace(/\\/g, '/');
+    if (this.documents.has(clean)) {
+      return this.documents.get(clean);
+    }
+
+    // 3. With .md appended
+    if (!clean.endsWith('.md') && this.documents.has(clean + '.md')) {
+      return this.documents.get(clean + '.md');
+    }
+
+    // 4. Exact basename or title match (case-insensitive)
+    const lowerClean = clean.toLowerCase();
+    const cleanWithoutExt = lowerClean.endsWith('.md') ? lowerClean.slice(0, -3) : lowerClean;
+    const baseTarget = cleanWithoutExt.split('/').pop() || cleanWithoutExt;
+
+    for (const [docPath, doc] of this.documents.entries()) {
+      const docPathLower = docPath.toLowerCase();
+      const docTitleLower = (doc.title || '').toLowerCase();
+      const docBase = docPathLower.split('/').pop()?.replace(/\.md$/, '') || '';
+
+      if (docPathLower === lowerClean || docPathLower === lowerClean + '.md') {
+        return doc;
+      }
+      if (docBase === baseTarget || docTitleLower === cleanWithoutExt) {
+        return doc;
+      }
+    }
+
+    // 5. Suffix match (e.g. "FastAPI.md" matches "01-Tech/FastAPI.md")
+    for (const [docPath, doc] of this.documents.entries()) {
+      const docPathLower = docPath.toLowerCase();
+      if (docPathLower.endsWith('/' + lowerClean) || docPathLower.endsWith('/' + lowerClean + '.md')) {
+        return doc;
+      }
+    }
+
+    return undefined;
   }
 
   public getStats() {
@@ -571,12 +655,16 @@ export class VaultEngine {
     }
 
     const topHubs = Array.from(this.documents.values())
-      .sort((a, b) => b.pageRank - a.pageRank)
+      .sort((a, b) => {
+        const prA = isFinite(a.pageRank) ? a.pageRank : 1.0;
+        const prB = isFinite(b.pageRank) ? b.pageRank : 1.0;
+        return prB - prA;
+      })
       .slice(0, 5)
       .map(d => ({
         path: d.path,
         title: d.title,
-        pageRank: d.pageRank,
+        pageRank: isFinite(d.pageRank) ? d.pageRank : 1.0,
         inDegree: this.backlinks.get(d.path)?.size || 0
       }));
 

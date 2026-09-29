@@ -21,10 +21,19 @@ export default class EchoBrainLocalPlugin extends Plugin {
     // 2. Initialize Vault Engine
     this.engine = new VaultEngine(this.app, this.settings);
 
-    // Initial Vault indexing after layout is ready
-    this.app.workspace.onLayoutReady(async () => {
-      const count = await this.engine.indexVault();
-      console.log(`[EchoBrain] Indexed ${count} notes using Obsidian native cache.`);
+    // Instant topology setup (<5ms, zero blocking)
+    this.engine.rebuildLinkGraph();
+
+    // Background incremental indexing after layout is ready and settled (delay 1s for butter-smooth startup)
+    this.app.workspace.onLayoutReady(() => {
+      setTimeout(async () => {
+        try {
+          const count = await this.engine.indexVault();
+          console.log(`[EchoBrain] Background indexed ${count} notes using cooperative time-slicing.`);
+        } catch (err) {
+          console.warn('[EchoBrain] Background indexing error:', err);
+        }
+      }, 1000);
     });
 
     // 3. Initialize Embedded MCP Server
@@ -107,7 +116,7 @@ export default class EchoBrainLocalPlugin extends Plugin {
     // 6. Register Sidebar View
     this.registerView(
       VIEW_TYPE_ECHOBRAIN,
-      (leaf: WorkspaceLeaf) => new EchoBrainView(leaf, this.engine, this.server)
+      (leaf: WorkspaceLeaf) => new EchoBrainView(leaf, this)
     );
 
     // Ribbon icon to open sidebar view

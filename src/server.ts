@@ -346,15 +346,41 @@ export class EmbeddedMcpServer {
               : 'AI Agent';
 
             // If this is a POST to an established SSE session
-            if (sessionId && this.sessions.has(sessionId)) {
-              try {
-                const session = this.sessions.get(sessionId)!;
-                // Use session transport
-                await session.transport.handlePostMessage(req, res, rawBody ? JSON.parse(rawBody) : undefined);
+            if (sessionId) {
+              if (this.sessions.has(sessionId)) {
+                try {
+                  const session = this.sessions.get(sessionId)!;
+                  let parsedBody: any = undefined;
+                  if (rawBody && rawBody.trim()) {
+                    try {
+                      parsedBody = JSON.parse(rawBody);
+                    } catch {
+                      res.writeHead(400, { 'Content-Type': 'application/json' });
+                      res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32700, message: 'Parse error' } }));
+                      return;
+                    }
+                  }
+                  await session.transport.handlePostMessage(req, res, parsedBody);
+                  return;
+                } catch (err: any) {
+                  console.error('[EchoBrain SSE] Session error:', err);
+                  if (!res.headersSent) {
+                    res.writeHead(500, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32603, message: err.message } }));
+                  }
+                  return;
+                }
+              } else {
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: 'SSE session not found or expired' } }));
                 return;
-              } catch (err: any) {
-                console.error('[EchoBrain SSE] Session error:', err);
               }
+            }
+
+            if (pathname === '/message' && !sessionId) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32602, message: 'Missing sessionId parameter' } }));
+              return;
             }
 
             // Otherwise, handle as Direct Streamable HTTP JSON-RPC 2.0
@@ -505,10 +531,10 @@ export class EmbeddedMcpServer {
         `);
       });
 
-      // Listen on all local interfaces (0.0.0.0) to support localhost, 127.0.0.1 and IPv6 seamlessly
-      this.httpServer.listen(this.port, () => {
+      // Listen on 127.0.0.1 (loopback) to prevent Windows firewall prompts and ensure lightning-fast binding
+      this.httpServer.listen(this.port, '127.0.0.1', () => {
         this.isRunning = true;
-        this.logActivity('System', 'Server 启动', `本地 MCP 服务已在端口 ${this.port} 成功监听 (全协议双模支持)`, 'success');
+        this.logActivity('System', 'Server 启动', `本地 MCP 服务已在 127.0.0.1:${this.port} 成功监听 (全协议双模支持)`, 'success');
         resolve(true);
       });
 

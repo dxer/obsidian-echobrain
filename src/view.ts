@@ -1,4 +1,5 @@
-import { ItemView, WorkspaceLeaf, TFile } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, setIcon } from 'obsidian';
+import type EchoBrainLocalPlugin from './main.js';
 import { VaultEngine } from './engine.js';
 import { EmbeddedMcpServer } from './server.js';
 import { SearchResultItem, ActivityLogItem } from './types.js';
@@ -6,16 +7,18 @@ import { SearchResultItem, ActivityLogItem } from './types.js';
 export const VIEW_TYPE_ECHOBRAIN = 'echobrain-recall-view';
 
 export class EchoBrainView extends ItemView {
+  public plugin: EchoBrainLocalPlugin;
   private engine: VaultEngine;
   private server: EmbeddedMcpServer;
   private activeNotePath: string = '';
   private recallResults: SearchResultItem[] = [];
   private activityLogs: ActivityLogItem[] = [];
 
-  constructor(leaf: WorkspaceLeaf, engine: VaultEngine, server: EmbeddedMcpServer) {
+  constructor(leaf: WorkspaceLeaf, plugin: EchoBrainLocalPlugin) {
     super(leaf);
-    this.engine = engine;
-    this.server = server;
+    this.plugin = plugin;
+    this.engine = plugin.engine;
+    this.server = plugin.server;
   }
 
   public getViewType(): string {
@@ -33,7 +36,9 @@ export class EchoBrainView extends ItemView {
   public addActivityLog(log: ActivityLogItem) {
     this.activityLogs.unshift(log);
     if (this.activityLogs.length > 25) this.activityLogs.pop();
-    this.renderActivityLogs();
+    if (this.plugin.settings.showActivityLogs) {
+      this.renderActivityLogs();
+    }
   }
 
   public async updateRecall(file: TFile | null) {
@@ -64,20 +69,33 @@ export class EchoBrainView extends ItemView {
   }
 
   public render() {
-    const container = this.containerEl.children[1];
-    container.empty();
-    container.addClass('echobrain-view-container');
+    const container = this.contentEl || (this.containerEl && (this.containerEl.children[1] as HTMLElement)) || this.containerEl;
+    if (!container) return;
 
-    // 1. Header
-    const header = container.createEl('div', { cls: 'echobrain-header' });
-    const titleBox = header.createEl('div', { cls: 'echobrain-title-box' });
-    titleBox.createEl('h4', { text: '关联知识召回 (Context Recall)' });
+    try {
+      container.empty();
+      container.addClass('echobrain-view-container');
 
-    const serverStatus = this.server.getIsRunning();
-    header.createEl('span', {
-      cls: `echobrain-badge ${serverStatus ? 'status-online' : 'status-offline'}`,
-      text: serverStatus ? `MCP Online (${this.server.getPort()})` : 'MCP Offline'
-    });
+      // 1. Header (Clean & Minimalist, removed MCP ONLINE badge)
+      const header = container.createEl('div', { cls: 'echobrain-header' });
+      const titleBox = header.createEl('div', { cls: 'echobrain-title-box' });
+      titleBox.createEl('h4', { text: '关联知识召回 (Context Recall)' });
+
+      // Action button to toggle activity logs
+      const actionsBox = header.createEl('div', { cls: 'echobrain-header-actions' });
+      const toggleLogBtn = actionsBox.createEl('button', {
+        cls: `clickable-icon echobrain-action-btn ${this.plugin.settings.showActivityLogs ? 'is-active' : ''}`,
+        attr: {
+          'aria-label': this.plugin.settings.showActivityLogs ? '隐藏 MCP 调用日志' : '显示 MCP 调用日志',
+          'title': this.plugin.settings.showActivityLogs ? '隐藏 MCP 调用日志' : '显示 MCP 调用日志'
+        }
+      });
+      setIcon(toggleLogBtn, 'scroll-text');
+      toggleLogBtn.onclick = async () => {
+        this.plugin.settings.showActivityLogs = !this.plugin.settings.showActivityLogs;
+        await this.plugin.saveSettings();
+        this.render();
+      };
 
     // 2. Active Note Section
     const activeSection = container.createEl('div', { cls: 'echobrain-active-section' });
@@ -136,17 +154,23 @@ export class EchoBrainView extends ItemView {
       }
     }
 
-    // 4. Live Agent Activity Stream
-    const logSection = container.createEl('div', { cls: 'echobrain-log-section' });
-    logSection.createEl('h5', { text: 'MCP 客户端调用日志' });
-    const logList = logSection.createEl('div', { cls: 'echobrain-log-list', attr: { id: 'echobrain-log-list' } });
+      // 4. Live Agent Activity Stream (Controlled by toggle)
+      if (this.plugin.settings.showActivityLogs) {
+        const logSection = container.createEl('div', { cls: 'echobrain-log-section' });
+        const logHeader = logSection.createEl('div', { cls: 'echobrain-log-header' });
+        logHeader.createEl('h5', { text: 'MCP 客户端调用日志' });
+        const logList = logSection.createEl('div', { cls: 'echobrain-log-list', attr: { id: 'echobrain-log-list' } });
 
-    if (this.activityLogs.length === 0) {
-      logList.createEl('div', { cls: 'echobrain-empty-log', text: '暂无请求日志 (客户端发起调用时自动记录)' });
-    } else {
-      for (const log of this.activityLogs) {
-        this.renderLogItem(logList, log);
+        if (this.activityLogs.length === 0) {
+          logList.createEl('div', { cls: 'echobrain-empty-log', text: '暂无请求日志 (客户端发起调用时自动记录)' });
+        } else {
+          for (const log of this.activityLogs) {
+            this.renderLogItem(logList, log);
+          }
+        }
       }
+    } catch (e) {
+      console.warn('[EchoBrain View] Render error:', e);
     }
   }
 

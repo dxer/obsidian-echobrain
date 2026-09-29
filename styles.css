@@ -84,6 +84,33 @@
   margin: 0;
 }
 
+.echobrain-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.echobrain-action-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.echobrain-action-btn:hover {
+  color: var(--text-normal);
+  background-color: var(--background-modifier-hover);
+}
+
+.echobrain-action-btn.is-active {
+  color: var(--interactive-accent);
+}
+
 .echobrain-active-section {
   font-size: 0.85em;
   color: var(--text-muted);

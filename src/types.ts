@@ -7,6 +7,7 @@ export interface EchoBrainPluginSettings {
   enableProactiveRecall: boolean;
   recallIdleDelay: number; // in ms
   recallMaxCards: number;
+  showActivityLogs: boolean; // 是否在侧边栏显示 MCP 客户端调用日志
 
   // Embedding Configuration
   embeddingMode: EmbeddingMode;
@@ -23,6 +24,7 @@ export const DEFAULT_SETTINGS: EchoBrainPluginSettings = {
   enableProactiveRecall: true,
   recallIdleDelay: 4000,
   recallMaxCards: 3,
+  showActivityLogs: false,
 
   // Default: Pure lightweight BM25 + Obsidian LinkGraph (0 model, 0 download)
   embeddingMode: 'none',

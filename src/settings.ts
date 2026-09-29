@@ -1,6 +1,7 @@
 import { App, PluginSettingTab, Setting, Notice } from 'obsidian';
 import type EchoBrainLocalPlugin from './main.js';
 import { EmbeddingMode } from './types.js';
+import { EchoBrainView, VIEW_TYPE_ECHOBRAIN } from './view.js';
 
 export class EchoBrainSettingTab extends PluginSettingTab {
   private plugin: EchoBrainLocalPlugin;
@@ -102,6 +103,24 @@ export class EchoBrainSettingTab extends PluginSettingTab {
           .onChange(async value => {
             this.plugin.settings.inboxFolder = value.trim() || 'Inbox';
             await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('显示客户端调用日志')
+      .setDesc('在知识召回侧边栏底部显示外部 Agent (Cursor / Claude / WorkBuddy) 的实时请求与工具调用日志')
+      .addToggle(toggle =>
+        toggle
+          .setValue(this.plugin.settings.showActivityLogs)
+          .onChange(async value => {
+            this.plugin.settings.showActivityLogs = value;
+            await this.plugin.saveSettings();
+            const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOBRAIN);
+            for (const leaf of leaves) {
+              if (leaf.view instanceof EchoBrainView) {
+                leaf.view.render();
+              }
+            }
           })
       );
 
