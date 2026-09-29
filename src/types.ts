@@ -8,6 +8,11 @@ export interface EchoBrainPluginSettings {
   recallIdleDelay: number; // in ms
   recallMaxCards: number;
   showActivityLogs: boolean; // 是否在侧边栏显示 MCP 客户端调用日志
+  ignoredPaths: string; // 排除目录或通配符过滤 (逗号分隔)
+
+  // Security Configuration
+  enableAuth: boolean; // 是否启用本地安全访问鉴权
+  authToken: string;   // 访问密钥 Bearer Token
 
   // Embedding Configuration
   embeddingMode: EmbeddingMode;
@@ -25,6 +30,10 @@ export const DEFAULT_SETTINGS: EchoBrainPluginSettings = {
   recallIdleDelay: 4000,
   recallMaxCards: 3,
   showActivityLogs: false,
+  ignoredPaths: '.trash, templates, Templates, *.excalidraw.md',
+
+  enableAuth: false,
+  authToken: '',
 
   // Default: Pure lightweight BM25 + Obsidian LinkGraph (0 model, 0 download)
   embeddingMode: 'none',

@@ -4,10 +4,14 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
   Tool
 } from '@modelcontextprotocol/sdk/types.js';
 import { VaultEngine } from './engine.js';
-import { ActivityLogItem } from './types.js';
+import { ActivityLogItem, EchoBrainPluginSettings } from './types.js';
 
 interface ClientSession {
   sessionId: string;
@@ -18,6 +22,7 @@ interface ClientSession {
 }
 
 export class EmbeddedMcpServer {
+  private settings: EchoBrainPluginSettings;
   private port: number;
   private engine: VaultEngine;
   private httpServer: http.Server | null = null;
@@ -25,9 +30,27 @@ export class EmbeddedMcpServer {
   private isRunning: boolean = false;
   private onActivityLog: ((item: ActivityLogItem) => void) | null = null;
 
-  constructor(port: number, engine: VaultEngine) {
-    this.port = port;
+  constructor(settings: EchoBrainPluginSettings, engine: VaultEngine) {
+    this.settings = settings;
+    this.port = settings.port;
     this.engine = engine;
+  }
+
+  public updateSettings(settings: EchoBrainPluginSettings) {
+    this.settings = settings;
+    this.port = settings.port;
+  }
+
+  public validateAuth(req: http.IncomingMessage, url: URL): boolean {
+    if (!this.settings.enableAuth || !this.settings.authToken) {
+      return true;
+    }
+    const authHeader = String(req.headers['authorization'] || '');
+    const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+    const tokenFromHeader = bearerMatch ? bearerMatch[1].trim() : '';
+    const tokenFromQuery = url.searchParams.get('token') || '';
+
+    return tokenFromHeader === this.settings.authToken || tokenFromQuery === this.settings.authToken;
   }
 
   public setActivityLogger(logger: (item: ActivityLogItem) => void) {
@@ -135,6 +158,100 @@ export class EmbeddedMcpServer {
     ];
   }
 
+  public getResourceDefinitions() {
+    return [
+      {
+        uri: 'obsidian://vault/stats',
+        name: 'Knowledge Vault Stats',
+        description: 'Real-time overview of indexed notes, tags, and top PageRank hubs in Obsidian',
+        mimeType: 'text/markdown'
+      },
+      {
+        uri: 'obsidian://vault/top-hubs',
+        name: 'Core Knowledge Hubs (MOCs)',
+        description: 'Top central concept notes and Maps of Content ranked by PageRank',
+        mimeType: 'text/markdown'
+      },
+      {
+        uri: 'obsidian://vault/inbox',
+        name: 'Recent Inbox Insights',
+        description: 'Latest precipitated insights and agent notes in the Inbox folder',
+        mimeType: 'text/markdown'
+      }
+    ];
+  }
+
+  public readResource(uri: string): { contents: { uri: string; mimeType: string; text: string }[] } {
+    if (uri === 'obsidian://vault/stats') {
+      const stats = this.engine.getStats();
+      const text = `# Obsidian Vault Overview\n- **Total Notes**: ${stats.totalNotes}\n- **Total Tags**: ${stats.totalTags}\n- **Indexed Vectors**: ${stats.vectorsIndexed}\n- **Embedding Ready**: ${stats.embeddingAvailable}`;
+      return { contents: [{ uri, mimeType: 'text/markdown', text }] };
+    }
+    if (uri === 'obsidian://vault/top-hubs') {
+      const stats = this.engine.getStats();
+      const hubsText = stats.topHubs.map((h, i) => `${i + 1}. [[${h.title}]] (PageRank: ${h.pageRank}, Citations: ${h.inDegree})`).join('\n');
+      return { contents: [{ uri, mimeType: 'text/markdown', text: `# Top Core Hubs (MOCs)\n\n${hubsText}` }] };
+    }
+    if (uri === 'obsidian://vault/inbox') {
+      const text = `# Obsidian Inbox\nUse tool \`search_personal_memory\` to query recent insights.`;
+      return { contents: [{ uri, mimeType: 'text/markdown', text }] };
+    }
+    throw new Error(`Resource not found: ${uri}`);
+  }
+
+  public getPromptDefinitions() {
+    return [
+      {
+        name: 'distill_to_obsidian',
+        description: 'Distill the current conversation into a clean, atomic technical note with [[WikiLinks]] ready for Obsidian',
+        arguments: [
+          { name: 'topic', description: 'Core topic of the note', required: true }
+        ]
+      },
+      {
+        name: 'review_code_with_vault',
+        description: 'Review code using past experiences, pitfalls, and architectural standards stored in your personal vault',
+        arguments: [
+          { name: 'code_context', description: 'Code snippet to review', required: true }
+        ]
+      }
+    ];
+  }
+
+  public getPrompt(name: string, args: any) {
+    if (name === 'distill_to_obsidian') {
+      const topic = String(args?.topic || '技术方案');
+      return {
+        description: `Distill conversation into a structured ${topic} note`,
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text: `请提炼我们刚才讨论中关于【${topic}】的核心结论、代码设计方案与避坑经验，生成符合 Obsidian 双链规范的 Markdown 笔记，包含：核心结论、代码示例、关键注意事项。生成完毕后建议调用 save_insight 工具将其保存到 Obsidian 知识库。`
+            }
+          }
+        ]
+      };
+    }
+    if (name === 'review_code_with_vault') {
+      const code = String(args?.code_context || '');
+      return {
+        description: 'Review code using Obsidian personal knowledge',
+        messages: [
+          {
+            role: 'user',
+            content: {
+              type: 'text',
+              text: `请首先调用 find_connections 或 search_personal_memory 工具，检索我个人知识库中关于以下代码涉及的技术栈的历史踩坑手记与设计模式，然后结合我的历史笔记经验进行深度代码审查：\n\n\`\`\`\n${code}\n\`\`\``
+            }
+          }
+        ]
+      };
+    }
+    throw new Error(`Prompt not found: ${name}`);
+  }
+
   public async executeTool(name: string, args: any, clientName: string): Promise<{ content: any[]; isError?: boolean }> {
     try {
       switch (name) {
@@ -178,14 +295,17 @@ export class EmbeddedMcpServer {
           const tags = Array.isArray(args?.tags) ? args.tags.map(String) : [];
           const category = args?.category ? String(args.category) : undefined;
 
-          const createdPath = await this.engine.saveInsight({ title, content, tags, category });
+          const { filePath: createdPath, connectedNotes } = await this.engine.saveInsight({ title, content, tags, category });
+          const weaveMsg = connectedNotes.length > 0
+            ? `\n🕸️ **知识自动织网**: 已自动挂载至既有知识节点: ${connectedNotes.map(n => `[[${n}]]`).join(', ')}`
+            : '';
           this.logActivity(clientName, 'save_insight', `写入灵感: "${title}" -> ${createdPath}`, 'success');
 
           return {
             content: [
               {
                 type: 'text',
-                text: `✅ 灵感已保存到 Obsidian: \`${createdPath}\`，并已实时建立索引！`
+                text: `✅ 灵感已保存到 Obsidian: \`${createdPath}\`，并已实时建立索引！${weaveMsg}`
               }
             ]
           };
@@ -332,6 +452,16 @@ export class EmbeddedMcpServer {
           return;
         }
 
+        // Validate Local Bearer Token if auth is enabled
+        if (!this.validateAuth(req, url)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            jsonrpc: '2.0',
+            error: { code: -32002, message: 'Unauthorized: Invalid or missing Bearer token' }
+          }));
+          return;
+        }
+
         // 2. Direct JSON-RPC POST handling (Streamable HTTP, used by Cursor / direct HTTP clients)
         if (req.method === 'POST') {
           let rawBody = '';
@@ -398,7 +528,11 @@ export class EmbeddedMcpServer {
                     id,
                     result: {
                       protocolVersion: '2024-11-05',
-                      capabilities: { tools: {} },
+                      capabilities: {
+                        tools: {},
+                        resources: {},
+                        prompts: {}
+                      },
                       serverInfo: { name: 'echobrain-local', version: '0.1.0' }
                     }
                   }));
@@ -434,6 +568,41 @@ export class EmbeddedMcpServer {
                     id,
                     result: toolResult
                   }));
+                  return;
+                }
+
+                if (method === 'resources/list') {
+                  const resources = this.getResourceDefinitions();
+                  this.logActivity(clientName, 'resources/list', `上报 ${resources.length} 个 MCP 资源`, 'success');
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ jsonrpc: '2.0', id, result: { resources } }));
+                  return;
+                }
+
+                if (method === 'resources/read') {
+                  const uri = rpc.params?.uri;
+                  const resContent = this.readResource(uri);
+                  this.logActivity(clientName, 'resources/read', `读取资源: ${uri}`, 'success');
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ jsonrpc: '2.0', id, result: resContent }));
+                  return;
+                }
+
+                if (method === 'prompts/list') {
+                  const prompts = this.getPromptDefinitions();
+                  this.logActivity(clientName, 'prompts/list', `上报 ${prompts.length} 个 MCP 提示词模板`, 'success');
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ jsonrpc: '2.0', id, result: { prompts } }));
+                  return;
+                }
+
+                if (method === 'prompts/get') {
+                  const pName = rpc.params?.name;
+                  const pArgs = rpc.params?.arguments || {};
+                  const promptResult = this.getPrompt(pName, pArgs);
+                  this.logActivity(clientName, 'prompts/get', `调取模板: ${pName}`, 'success');
+                  res.writeHead(200, { 'Content-Type': 'application/json' });
+                  res.end(JSON.stringify({ jsonrpc: '2.0', id, result: promptResult }));
                   return;
                 }
 
@@ -579,12 +748,16 @@ export class EmbeddedMcpServer {
       },
       {
         capabilities: {
-          tools: {}
+          tools: {},
+          resources: {},
+          prompts: {}
         }
       }
     );
 
     const tools = this.getToolDefinitions();
+    const resources = this.getResourceDefinitions();
+    const prompts = this.getPromptDefinitions();
 
     mcpServer.setRequestHandler(ListToolsRequestSchema, async () => {
       return { tools };
@@ -593,6 +766,24 @@ export class EmbeddedMcpServer {
     mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
       return this.executeTool(name, args, clientName);
+    });
+
+    mcpServer.setRequestHandler(ListResourcesRequestSchema, async () => {
+      return { resources };
+    });
+
+    mcpServer.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const { uri } = request.params;
+      return this.readResource(uri);
+    });
+
+    mcpServer.setRequestHandler(ListPromptsRequestSchema, async () => {
+      return { prompts };
+    });
+
+    mcpServer.setRequestHandler(GetPromptRequestSchema, async (request) => {
+      const { name, arguments: args } = request.params;
+      return this.getPrompt(name, args);
     });
 
     return mcpServer;

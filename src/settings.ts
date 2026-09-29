@@ -107,6 +107,19 @@ export class EchoBrainSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName('排除路径与文件过滤')
+      .setDesc('索引时忽略的目录或通配符后缀 (逗号分隔，如 .trash, templates, *.excalidraw.md)')
+      .addTextArea(text =>
+        text
+          .setPlaceholder('.trash, templates, *.excalidraw.md')
+          .setValue(this.plugin.settings.ignoredPaths)
+          .onChange(async value => {
+            this.plugin.settings.ignoredPaths = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
       .setName('显示客户端调用日志')
       .setDesc('在知识召回侧边栏底部显示外部 Agent (Cursor / Claude / WorkBuddy) 的实时请求与工具调用日志')
       .addToggle(toggle =>
@@ -124,6 +137,48 @@ export class EchoBrainSettingTab extends PluginSettingTab {
           })
       );
 
+    // Security & Access Token
+    new Setting(containerEl)
+      .setName('启用本地安全访问鉴权')
+      .setDesc('开启后，外部 Agent 必须提供 Bearer Token 才能访问你的 Obsidian 个人知识库')
+      .addToggle(toggle =>
+        toggle
+          .setValue(this.plugin.settings.enableAuth)
+          .onChange(async value => {
+            this.plugin.settings.enableAuth = value;
+            if (value && !this.plugin.settings.authToken) {
+              this.plugin.settings.authToken = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+            }
+            await this.plugin.saveSettings();
+            this.display();
+          })
+      );
+
+    if (this.plugin.settings.enableAuth) {
+      new Setting(containerEl)
+        .setName('安全密钥 (Access Token)')
+        .setDesc('请求需携带 Authorization: Bearer <token> 或 ?token=<token>')
+        .addText(text =>
+          text
+            .setPlaceholder('填写或生成 Token')
+            .setValue(this.plugin.settings.authToken)
+            .onChange(async val => {
+              this.plugin.settings.authToken = val.trim();
+              await this.plugin.saveSettings();
+            })
+        )
+        .addButton(btn =>
+          btn
+            .setButtonText('随机生成新密钥')
+            .onClick(async () => {
+              this.plugin.settings.authToken = 'eb_' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+              await this.plugin.saveSettings();
+              this.display();
+              new Notice('已生成新安全密钥');
+            })
+        );
+    }
+
     // 3. Client Integration Generators
     containerEl.createEl('h3', { text: '客户端集成 (Client Integration)' });
     containerEl.createEl('p', {
@@ -131,17 +186,24 @@ export class EchoBrainSettingTab extends PluginSettingTab {
       text: '外部 AI 客户端（如 Cursor、Claude Desktop）可通过配置本地 SSE 地址直接接入。'
     });
 
+    const isAuth = this.plugin.settings.enableAuth && this.plugin.settings.authToken;
+    const effectiveSseUrl = isAuth
+      ? `http://127.0.0.1:${port}/sse?token=${this.plugin.settings.authToken}`
+      : sseUrl;
+
     // Cursor Config
     const cursorBox = containerEl.createEl('div', { cls: 'echobrain-client-card' });
     cursorBox.createEl('h4', { text: 'Cursor' });
     cursorBox.createEl('p', {
       text: '在项目根目录 .cursor/mcp.json 或全局配置中添加：'
     });
+    const cursorServerObj: any = { url: effectiveSseUrl };
+    if (isAuth) {
+      cursorServerObj.headers = { Authorization: `Bearer ${this.plugin.settings.authToken}` };
+    }
     const cursorJson = JSON.stringify({
       mcpServers: {
-        echobrain: {
-          url: sseUrl
-        }
+        echobrain: cursorServerObj
       }
     }, null, 2);
     cursorBox.createEl('pre', { text: cursorJson });
@@ -157,12 +219,13 @@ export class EchoBrainSettingTab extends PluginSettingTab {
     workbuddyBox.createEl('p', {
       text: '在 WorkBuddy【连接器 / Connectors】->【自定义连接器】->【配置 MCP】中粘贴：'
     });
+    const wbServerObj: any = { type: 'http', url: effectiveSseUrl };
+    if (isAuth) {
+      wbServerObj.headers = { Authorization: `Bearer ${this.plugin.settings.authToken}` };
+    }
     const workbuddyJson = JSON.stringify({
       mcpServers: {
-        echobrain: {
-          type: 'http',
-          url: sseUrl
-        }
+        echobrain: wbServerObj
       }
     }, null, 2);
     workbuddyBox.createEl('pre', { text: workbuddyJson });
@@ -181,7 +244,7 @@ export class EchoBrainSettingTab extends PluginSettingTab {
     const claudeJson = JSON.stringify({
       mcpServers: {
         echobrain: {
-          url: sseUrl
+          url: effectiveSseUrl
         }
       }
     }, null, 2);

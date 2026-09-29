@@ -10,10 +10,12 @@ export class VaultEngine {
   private backlinks: Map<string, Set<string>> = new Map();
   private isIndexing: boolean = false;
   private inboxFolder: string;
+  private settings: EchoBrainPluginSettings;
   private embeddingService: PluginEmbeddingService;
 
   constructor(app: App, settings: EchoBrainPluginSettings) {
     this.app = app;
+    this.settings = settings;
     this.inboxFolder = settings.inboxFolder;
     const basePath = (app.vault.adapter as any).getBasePath?.() || '';
     this.embeddingService = new PluginEmbeddingService(basePath, settings);
@@ -24,8 +26,37 @@ export class VaultEngine {
   }
 
   public updateSettings(settings: EchoBrainPluginSettings) {
+    this.settings = settings;
     this.inboxFolder = settings.inboxFolder;
     this.embeddingService.updateSettings(settings);
+  }
+
+  public isPathIgnored(filePath: string): boolean {
+    if (!filePath) return true;
+    const norm = filePath.replace(/\\/g, '/').toLowerCase();
+
+    // Always ignore hidden / system folders
+    if (norm.startsWith('.trash/') || norm.startsWith('.obsidian/') || norm.startsWith('.git/')) {
+      return true;
+    }
+
+    const patterns = (this.settings.ignoredPaths || '')
+      .split(/[\n,]+/)
+      .map(p => p.trim().toLowerCase())
+      .filter(Boolean);
+
+    for (const pat of patterns) {
+      if (pat.startsWith('*.')) {
+        const ext = pat.slice(1);
+        if (norm.endsWith(ext)) return true;
+      } else {
+        const cleanPat = pat.replace(/\/+$/, '');
+        if (norm === cleanPat || norm.startsWith(cleanPat + '/') || norm.includes('/' + cleanPat + '/')) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   public setInboxFolder(folder: string) {
@@ -41,7 +72,7 @@ export class VaultEngine {
 
     try {
       this.rebuildLinkGraph();
-      const files = this.app.vault.getMarkdownFiles();
+      const files = this.app.vault.getMarkdownFiles().filter(f => !this.isPathIgnored(f.path));
       const batchSize = 25;
 
       for (let i = 0; i < files.length; i += batchSize) {
@@ -65,7 +96,7 @@ export class VaultEngine {
    * Index or update a single file (computes embedding on-demand or uses cache)
    */
   public async indexFile(file: TFile, computeEmbedding: boolean = false): Promise<void> {
-    if (file.extension !== 'md') return;
+    if (file.extension !== 'md' || this.isPathIgnored(file.path)) return;
 
     try {
       const content = await this.app.vault.read(file);
@@ -545,9 +576,14 @@ export class VaultEngine {
   }
 
   /**
-   * Save an insight to the Inbox folder using Obsidian native app.vault API
+   * Save an insight to the Inbox folder using Obsidian native app.vault API with automatic graph weaving
    */
-  public async saveInsight(options: { title: string; content: string; tags?: string[]; category?: string }): Promise<string> {
+  public async saveInsight(options: {
+    title: string;
+    content: string;
+    tags?: string[];
+    category?: string
+  }): Promise<{ filePath: string; connectedNotes: string[] }> {
     const inboxPath = (this.inboxFolder || 'Inbox').replace(/\\/g, '/').replace(/\/+$/, '').trim();
     
     // Ensure inbox folder exists
@@ -576,6 +612,28 @@ export class VaultEngine {
         : `${baseName}-${suffix}.md`;
     }
 
+    // Auto-link discovery: Discover 2~3 existing related notes to weave new insight into personal graph
+    let autoLinksSection = '';
+    const connectedNotes: string[] = [];
+    try {
+      const suggestedConnections = await this.findConnections({
+        currentContext: `${options.title}\n${options.content.slice(0, 1000)}`,
+        limit: 3,
+        expandGraphHops: 1
+      });
+
+      if (suggestedConnections.length > 0) {
+        const linkItems: string[] = [];
+        for (const c of suggestedConnections) {
+          linkItems.push(`- [[${c.title}]] (${c.connectionReason || '知识拓扑高度共鸣'})`);
+          connectedNotes.push(c.title);
+        }
+        autoLinksSection = `\n\n---\n## 🔗 推荐关联知识网络\n${linkItems.join('\n')}\n`;
+      }
+    } catch (e) {
+      console.warn('[EchoBrain] Auto-weaving failed:', e);
+    }
+
     const tagsArr = options.tags || ['agent-insight'];
     const frontmatterLines = [
       '---',
@@ -587,14 +645,14 @@ export class VaultEngine {
     if (options.category) {
       frontmatterLines.push(`category: "${options.category}"`);
     }
-    frontmatterLines.push('---', '', `# ${options.title}`, '', options.content.trim(), '');
+    frontmatterLines.push('---', '', `# ${options.title}`, '', options.content.trim() + autoLinksSection, '');
 
     const fileContent = frontmatterLines.join('\n');
     const newFile = await this.app.vault.create(filePath, fileContent);
     await this.indexFile(newFile);
     this.rebuildLinkGraph();
 
-    return filePath;
+    return { filePath, connectedNotes };
   }
 
   public getDocument(path: string): IndexedDocument | undefined {

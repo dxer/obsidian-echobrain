@@ -37,7 +37,7 @@ export default class EchoBrainLocalPlugin extends Plugin {
     });
 
     // 3. Initialize Embedded MCP Server
-    this.server = new EmbeddedMcpServer(this.settings.port, this.engine);
+    this.server = new EmbeddedMcpServer(this.settings, this.engine);
     this.server.setActivityLogger((log) => {
       const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_ECHOBRAIN);
       for (const leaf of leaves) {
@@ -249,6 +249,7 @@ export default class EchoBrainLocalPlugin extends Plugin {
   async saveSettings() {
     await this.saveData(this.settings);
     this.engine.updateSettings(this.settings);
+    this.server.updateSettings(this.settings);
     this.updateStatusBar();
   }
 }

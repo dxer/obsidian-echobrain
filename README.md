@@ -44,10 +44,10 @@ EchoBrain Local 是一个运行在 Obsidian 内部的本地优先（Local-First�
      (BM25/分词)       (ONNX/WASM)      (PageRank)         (Inbox)
 ```
 
-1. **读 (Precision Read)**：自研代码标识符切词与中文字词滑动窗口（2-gram / 3-gram），毫秒级精准命中函数名、配置项、报错码及专有名词。
-2. **懂 (Semantic Understand)**：三级按需嵌入架构——零开销纯词频模式、按需加载 40MB 本地 WebAssembly ONNX 模型（`bge-small-zh-v1.5`），或接入任意兼容 OpenAI / Ollama 的向量 API，穿透字面差异识别模糊意图。
+1. **读 (Precision Read)**：自研 CamelCase / PascalCase 代码标识符切词与中文字词滑动窗口（2-gram / 3-gram），毫秒级精准拆解命中类名、函数名、配置项及专有名词，内置排除路径黑名单过滤。
+2. **懂 (Semantic Understand)**：三级按需嵌入架构与两阶段检索（Two-Stage Candidate Slicing）——零开销纯词频模式、从阿里 ModelScope 极速拉取的 40MB 本地 WebAssembly ONNX 模型（`bge-small-zh-v1.5`，含 4 位小数紧凑原子存储），或接入任意兼容 OpenAI / Ollama 的向量 API。
 3. **联 (Topological Relate)**：直接挂载 Obsidian 原生 `metadataCache.resolvedLinks`，基于 PageRank 识别知识枢纽（MOC），顺藤摸瓜完成前向引用与反向链接（Backlinks）的多跳展开。
-4. **沉淀 (Safe Precipitate)**：在 IDE 中生成的代码架构、技术方案或调试手记，通过 `save_insight` 工具原子写入 `Inbox/` 目录，并即时建立索引，形成知识进化闭环。
+4. **沉淀 (Safe Precipitate & Auto-Weave)**：在 IDE 中生成的代码架构、技术方案或调试手记，通过 `save_insight` 工具原子写入 `Inbox/` 目录，**自动分析语义并向正文织入已有笔记的双链网络（Auto-Weaving）**，形成知识进化闭环。
 
 ---
 
@@ -125,20 +125,41 @@ EchoBrain Local 是一个运行在 Obsidian 内部的本地优先（Local-First�
 }
 ```
 
+> 🔒 **安全鉴权说明**：若在插件设置中启用了【本地安全访问鉴权】，外部 Agent 连接时只需在 headers 加上 `Authorization: Bearer <你的Token>`，或直接使用带有 query 参数的地址：`http://127.0.0.1:23333/sse?token=<你的Token>`。设置面板中支持一键复制已组装完成的带鉴权配置。
+
 ---
 
-## 标准 MCP 工具规范
+## 全量 MCP 协议规范支持
 
-EchoBrain Local 向外部 Agent 暴露 6 个标准协议工具：
+EchoBrain Local 全面实现了 MCP 规范的 **Tools**、**Resources** 与 **Prompts** 三大支柱：
+
+### 1. Tools (工具集合)
 
 | 工具名称 | 功能描述 | 核心参数说明 |
 |---|---|---|
 | `search_personal_memory` | 检索知识库中的笔记切片与双链关联 | `query` (必需): 自然语言或关键词<br>`mode`: `"hybrid"` \| `"bm25"` \| `"semantic"`<br>`limit`: 返回条数 (默认 5)<br>`expand_graph_hops`: 双链拓展跳数 (默认 1) |
-| `save_insight` | 安全写入技术方案或调试经验至收件箱 | `title` (必需): 笔记标题<br>`content` (必需): Markdown 正文<br>`tags`: 标签列表<br>`category`: 分类名称 |
+| `save_insight` | 安全写入收件箱并**自动织入双链知识网络** | `title` (必需): 笔记标题<br>`content` (必需): Markdown 正文<br>`tags`: 标签列表<br>`category`: 分类名称 |
 | `find_connections` | 根据正在编辑的代码或文本环境回响关联经验 | `current_context` (必需): 当前代码块或文本片段<br>`limit`: 返回条数限制 (默认 3)<br>`expand_graph_hops`: 关联拓扑扩展跳数 |
 | `explore_graph_neighborhood` | 探查某篇笔记在知识库双链网络中的局部拓扑与出入度 | `path` (必需): 目标笔记相对路径<br>`max_hops`: 探索深度 (1 或 2)<br>`limit`: 邻接节点上限 |
 | `read_note` | 获取指定笔记完整 Markdown、正向引用与反向链接 | `path` (必需): 目标笔记相对路径 |
 | `get_vault_stats` | 获取知识库概况、向量状态与核心母笔记榜单 | 无参数 |
+
+### 2. Resources (动态知识资源直挂)
+
+Agent 客户端可直接订阅或静态挂载个人知识库的只读上下文：
+
+| Resource URI | 资源名称 | 描述 |
+|---|---|---|
+| `obsidian://vault/stats` | 知识库全局统计 | 笔记总量、标签分布、向量索引状态 |
+| `obsidian://vault/top-hubs` | 核心知识枢纽 (MOCs) | 按 PageRank 权重与被引用度排序的核心母笔记列表 |
+| `obsidian://vault/inbox` | 收件箱最新沉淀 | Agent 最新写入的洞察与手记索引 |
+
+### 3. Prompts (预设 Agent 专业工作流)
+
+| 模板标识 | 描述 | 调用场景 |
+|---|---|---|
+| `distill_to_obsidian` | 提炼当前会话生成双链笔记 | 将开发对话中的关键架构选型或 Bug 踩坑沉淀为标准 Markdown |
+| `review_code_with_vault` | 结合个人知识库进行深度代码审查 | 唤起 Agent 结合你在 Obsidian 沉淀的技术规范审查指定代码 |
 
 ---
 

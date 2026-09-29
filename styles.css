@@ -134,6 +134,64 @@
   border-color: var(--interactive-accent);
 }
 
+.echobrain-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.echobrain-card-title-box {
+  flex: 1;
+  min-width: 0;
+}
+
+.echobrain-card-title-link {
+  font-weight: 600;
+  font-size: 0.95em;
+  color: var(--text-normal);
+  text-decoration: none;
+  display: block;
+}
+
+.echobrain-card-title-link:hover {
+  color: var(--interactive-accent);
+  text-decoration: underline;
+}
+
+.echobrain-card-folder {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.echobrain-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.echobrain-card-action-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 3px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.echobrain-card-action-btn:hover {
+  color: var(--text-normal);
+  background-color: var(--background-modifier-hover);
+}
+
 .echobrain-card-title {
   font-weight: 600;
   margin-bottom: 6px;

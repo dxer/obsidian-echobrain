@@ -3,26 +3,56 @@ const STOPWORDS = new Set([
   '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好', '自己', '这'
 ]);
 
+/**
+ * Split camelCase and PascalCase into constituent subwords
+ * e.g. "getUserProfile" -> ["get", "User", "Profile"]
+ * e.g. "XMLHttpParser" -> ["XML", "Http", "Parser"]
+ */
+function splitCamelCase(word: string): string[] {
+  if (!word || word.length <= 1) return [];
+  return word
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .split(/\s+/)
+    .filter(w => w.length > 1);
+}
+
 export function tokenize(text: string): string[] {
   if (!text || typeof text !== 'string') return [];
 
-  const raw = text.toLowerCase();
   const tokens: string[] = [];
 
-  // Match English words and code identifiers
-  const englishMatches = raw.match(/[a-z0-9_\-\.]+/g) || [];
-  for (const m of englishMatches) {
-    if (m.length > 1 && !STOPWORDS.has(m)) {
-      tokens.push(m);
-      const subWords = m.split(/[_\-\.]+/).filter(w => w.length > 1 && !STOPWORDS.has(w));
-      if (subWords.length > 1) {
-        tokens.push(...subWords);
+  // 1. Match code identifiers and English words with case preservation for CamelCase extraction
+  const rawIdentifiers = text.match(/[A-Za-z0-9_\-\.]+/g) || [];
+  for (const rawId of rawIdentifiers) {
+    const lowerId = rawId.toLowerCase();
+    if (lowerId.length > 1 && !STOPWORDS.has(lowerId)) {
+      tokens.push(lowerId);
+    }
+
+    // Split by punctuation: underscore, hyphen, dot
+    const punctParts = rawId.split(/[_\-\.]+/).filter(p => p.length > 1);
+    for (const part of punctParts) {
+      const lowerPart = part.toLowerCase();
+      if (!STOPWORDS.has(lowerPart)) {
+        tokens.push(lowerPart);
+      }
+
+      // CamelCase / PascalCase subword decomposition
+      const camelParts = splitCamelCase(part);
+      if (camelParts.length > 1) {
+        for (const cp of camelParts) {
+          const lowerCp = cp.toLowerCase();
+          if (lowerCp.length > 1 && !STOPWORDS.has(lowerCp)) {
+            tokens.push(lowerCp);
+          }
+        }
       }
     }
   }
 
-  // Match Chinese character segments
-  const chineseMatches = raw.match(/[\u4e00-\u9fa5]+/g) || [];
+  // 2. Match Chinese character segments
+  const chineseMatches = text.match(/[\u4e00-\u9fa5]+/g) || [];
   for (const segment of chineseMatches) {
     const chars = Array.from(segment);
     for (let i = 0; i < chars.length; i++) {
@@ -42,5 +72,5 @@ export function tokenize(text: string): string[] {
     }
   }
 
-  return tokens;
+  return Array.from(new Set(tokens));
 }

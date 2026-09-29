@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, TFile, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, TFile, setIcon, MarkdownView, Notice } from 'obsidian';
 import type EchoBrainLocalPlugin from './main.js';
 import { VaultEngine } from './engine.js';
 import { EmbeddedMcpServer } from './server.js';
@@ -122,13 +122,49 @@ export class EchoBrainView extends ItemView {
       for (const res of this.recallResults) {
         const card = cardsContainer.createEl('div', { cls: 'echobrain-card' });
         
-        // Card title with jump link
-        const cardTitle = card.createEl('div', { cls: 'echobrain-card-title' });
-        const link = cardTitle.createEl('a', { text: res.title });
+        // Card Header: Title + Path + Quick Action Buttons
+        const cardHeader = card.createEl('div', { cls: 'echobrain-card-header' });
+        const cardTitleBox = cardHeader.createEl('div', { cls: 'echobrain-card-title-box' });
+        const link = cardTitleBox.createEl('a', { text: res.title, cls: 'echobrain-card-title-link' });
         link.addEventListener('click', (e) => {
           e.preventDefault();
           this.app.workspace.openLinkText(res.path, '', false);
         });
+
+        const folderPart = res.path.includes('/') ? res.path.slice(0, res.path.lastIndexOf('/')) : '';
+        if (folderPart) {
+          cardTitleBox.createEl('div', { cls: 'echobrain-card-folder', text: `📁 ${folderPart}` });
+        }
+
+        // Quick action buttons: Copy WikiLink & Insert at cursor
+        const btnBox = cardHeader.createEl('div', { cls: 'echobrain-card-actions' });
+
+        const copyBtn = btnBox.createEl('button', {
+          cls: 'clickable-icon echobrain-card-action-btn',
+          attr: { 'aria-label': '复制双链引用', 'title': '复制双链引用' }
+        });
+        setIcon(copyBtn, 'copy');
+        copyBtn.onclick = (e) => {
+          e.stopPropagation();
+          navigator.clipboard.writeText(`[[${res.title}]]`);
+          new Notice(`已复制: [[${res.title}]]`);
+        };
+
+        const insertBtn = btnBox.createEl('button', {
+          cls: 'clickable-icon echobrain-card-action-btn',
+          attr: { 'aria-label': '插入至当前光标位置', 'title': '插入至当前光标位置' }
+        });
+        setIcon(insertBtn, 'file-input');
+        insertBtn.onclick = (e) => {
+          e.stopPropagation();
+          const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+          if (activeView && activeView.editor) {
+            activeView.editor.replaceSelection(`[[${res.title}]]`);
+            new Notice(`已插入引用: [[${res.title}]]`);
+          } else {
+            new Notice('请先在编辑器中打开并聚焦一篇 Markdown 笔记');
+          }
+        };
 
         // Connection reason badge
         if (res.connectionReason) {
