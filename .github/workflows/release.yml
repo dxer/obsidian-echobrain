@@ -1,0 +1,51 @@
+name: Release Obsidian Plugin
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run E2E verification tests
+        run: npm test
+
+      - name: Build plugin production bundle
+        run: npm run build
+
+      - name: Package plugin zip
+        run: |
+          mkdir -p dist-zip/echobrain-local
+          cp main.js manifest.json styles.css dist-zip/echobrain-local/
+          cd dist-zip && zip -r ../echobrain-local.zip echobrain-local/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            main.js
+            manifest.json
+            styles.css
+            echobrain-local.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
